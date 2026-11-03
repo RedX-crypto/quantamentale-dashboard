@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import os
 
-# Import yfinance come fallback
+# Import yfinance come fallback e fonte principale pulita
 try:
     import yfinance as yf
 except ImportError:
@@ -27,7 +27,7 @@ modulo = st.sidebar.selectbox(
     ]
 )
 
-# Funzione per cercare i file Excel nei percorsi di sistema
+# Funzione per cercare i file Excel nei percorsi di sistema (Database secondario)
 def find_excel_file(filename):
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
     user_home = os.path.expanduser("~")
@@ -108,7 +108,83 @@ def filter_by_horizon(df, horizon):
     
     return df_filtered, p_start, p_end, ret_pct
 
-# Funzione universale per grafici puliti con cache
+# Caricamento storico ETF pulito direttamente tramite yfinance (continuo e senza buchi)
+@st.cache_data
+def load_etf_history_from_file(sheet_name, ticker="SPY"):
+    if yf is not None:
+        try:
+            df_yf = yf.Ticker(ticker).history(period="max")
+            if not df_yf.empty:
+                df_yf = df_yf.reset_index()
+                date_col = [c for c in df_yf.columns if 'date' in c.lower() or 'data' in c.lower()][0]
+                df_yf[date_col] = strip_timezone(df_yf[date_col])
+                df_yf = df_yf.sort_values(by=date_col)
+                return df_yf[[date_col, 'Open', 'High', 'Low', 'Close']].rename(
+                    columns={date_col: 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'}
+                ).dropna()
+        except Exception:
+            pass
+            
+    # Fallback su file Excel se yfinance non risponde
+    etf_file = find_excel_file("Hystorical_Data_ETF.xlsx")
+    if etf_file:
+        try:
+            df = pd.read_excel(etf_file, sheet_name=sheet_name).dropna(subset=['Close'])
+            date_col = [c for c in df.columns if 'date' in c.lower() or 'data' in c.lower()][0]
+            close_col = [c for c in df.columns if 'close' in c.lower() or 'chiusura' in c.lower()][0]
+            open_col = [c for c in df.columns if 'open' in c.lower() or 'apertura' in c.lower()][0] if any('open' in c.lower() or 'apertura' in c.lower() for c in df.columns) else close_col
+            high_col = [c for c in df.columns if 'high' in c.lower() or 'alto' in c.lower() or 'massimo' in c.lower()][0] if any('high' in c.lower() or 'alto' in c.lower() for c in df.columns) else close_col
+            low_col = [c for c in df.columns if 'low' in c.lower() or 'basso' in c.lower() or 'minimo' in c.lower()][0] if any('low' in c.lower() or 'basso' in c.lower() for c in df.columns) else close_col
+            
+            df[date_col] = strip_timezone(df[date_col])
+            df = df.sort_values(by=date_col)
+            return df[[date_col, open_col, high_col, low_col, close_col]].rename(
+                columns={date_col: 'Date', open_col: 'Open', high_col: 'High', low_col: 'Low', close_col: 'Close'}
+            ).dropna()
+        except Exception:
+            pass
+    return None
+
+# Caricamento storico Crypto per grafici con cache
+@st.cache_data
+def load_crypto_history_from_file(crypto_code):
+    symbol_display = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
+    if yf is not None:
+        try:
+            df_yf = yf.Ticker(symbol_display).history(period="max", interval="1wk")
+            if not df_yf.empty:
+                df_yf = df_yf.reset_index()
+                date_col = [c for c in df_yf.columns if 'date' in c.lower() or 'data' in c.lower()][0]
+                df_yf[date_col] = strip_timezone(df_yf[date_col])
+                df_yf = df_yf.sort_values(by=date_col)
+                df_out = df_yf[[date_col, 'Open', 'High', 'Low', 'Close']].rename(
+                    columns={date_col: 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'}
+                ).dropna()
+                return ensure_weekly(df_out)
+        except Exception:
+            pass
+
+    crypto_file = find_excel_file("Hystorical_Data_Crypto.xlsx")
+    if crypto_file:
+        try:
+            df = pd.read_excel(crypto_file, sheet_name=crypto_code).dropna(subset=['Close'])
+            date_col = [c for c in df.columns if 'date' in c.lower() or 'data' in c.lower()][0]
+            close_col = [c for c in df.columns if 'close' in c.lower() or 'chiusura' in c.lower()][0]
+            open_col = [c for c in df.columns if 'open' in c.lower() or 'apertura' in c.lower()][0] if any('open' in c.lower() or 'apertura' in c.lower() for c in df.columns) else close_col
+            high_col = [c for c in df.columns if 'high' in c.lower() or 'alto' in c.lower() or 'massimo' in c.lower()][0] if any('high' in c.lower() or 'alto' in c.lower() for c in df.columns) else close_col
+            low_col = [c for c in df.columns if 'low' in c.lower() or 'basso' in c.lower() or 'minimo' in c.lower()][0] if any('low' in c.lower() or 'basso' in c.lower() for c in df.columns) else close_col
+            
+            df[date_col] = strip_timezone(df[date_col])
+            df = df.sort_values(by=date_col)
+            df_out = df[[date_col, open_col, high_col, low_col, close_col]].rename(
+                columns={date_col: 'Date', open_col: 'Open', high_col: 'High', low_col: 'Low', close_col: 'Close'}
+            )
+            return ensure_weekly(df_out)
+        except Exception:
+            pass
+    return None
+
+# Funzione universale per grafici puliti e continui con cache
 @st.cache_data
 def build_pro_chart(df, title_name, chart_type="Linea", is_log=True):
     df_c = df.copy()
@@ -127,7 +203,6 @@ def build_pro_chart(df, title_name, chart_type="Linea", is_log=True):
             decreasing_line_color='#ef5350'
         ))
     else:
-        # Grafico a linea continua pulito (default consigliato per eliminare i buchi)
         fig.add_trace(go.Scatter(
             x=df_c['Date'],
             y=df_c['Close'],
@@ -178,52 +253,6 @@ r_data_18 = [
 
 df_all = pd.DataFrame(r_data_18)
 
-# Caricamento storico ETF con cache
-@st.cache_data
-def load_etf_history_from_file(sheet_name):
-    etf_file = find_excel_file("Hystorical_Data_ETF.xlsx")
-    if etf_file:
-        try:
-            df = pd.read_excel(etf_file, sheet_name=sheet_name)
-            date_col = [c for c in df.columns if 'date' in c.lower() or 'data' in c.lower()][0]
-            close_col = [c for c in df.columns if 'close' in c.lower() or 'chiusura' in c.lower()][0]
-            open_col = [c for c in df.columns if 'open' in c.lower() or 'apertura' in c.lower()][0] if any('open' in c.lower() or 'apertura' in c.lower() for c in df.columns) else close_col
-            high_col = [c for c in df.columns if 'high' in c.lower() or 'alto' in c.lower() or 'massimo' in c.lower()][0] if any('high' in c.lower() or 'alto' in c.lower() for c in df.columns) else close_col
-            low_col = [c for c in df.columns if 'low' in c.lower() or 'basso' in c.lower() or 'minimo' in c.lower()][0] if any('low' in c.lower() or 'basso' in c.lower() for c in df.columns) else close_col
-            
-            df[date_col] = strip_timezone(df[date_col])
-            df = df.sort_values(by=date_col)
-            return df[[date_col, open_col, high_col, low_col, close_col]].rename(
-                columns={date_col: 'Date', open_col: 'Open', high_col: 'High', low_col: 'Low', close_col: 'Close'}
-            )
-        except Exception:
-            pass
-    return None
-
-# Caricamento storico Crypto per grafici con cache
-@st.cache_data
-def load_crypto_history_from_file(crypto_code):
-    crypto_file = find_excel_file("Hystorical_Data_Crypto.xlsx")
-    if crypto_file:
-        try:
-            df = pd.read_excel(crypto_file, sheet_name=crypto_code)
-            date_col = [c for c in df.columns if 'date' in c.lower() or 'data' in c.lower()][0]
-            close_col = [c for c in df.columns if 'close' in c.lower() or 'chiusura' in c.lower()][0]
-            open_col = [c for c in df.columns if 'open' in c.lower() or 'apertura' in c.lower()][0] if any('open' in c.lower() or 'apertura' in c.lower() for c in df.columns) else close_col
-            high_col = [c for c in df.columns if 'high' in c.lower() or 'alto' in c.lower() or 'massimo' in c.lower()][0] if any('high' in c.lower() or 'alto' in c.lower() for c in df.columns) else close_col
-            low_col = [c for c in df.columns if 'low' in c.lower() or 'basso' in c.lower() or 'minimo' in c.lower()][0] if any('low' in c.lower() or 'basso' in c.lower() for c in df.columns) else close_col
-            
-            df[date_col] = strip_timezone(df[date_col])
-            df = df.sort_values(by=date_col)
-            df_out = df[[date_col, open_col, high_col, low_col, close_col]].rename(
-                columns={date_col: 'Date', open_col: 'Open', high_col: 'High', low_col: 'Low', close_col: 'Close'}
-            )
-            return ensure_weekly(df_out)
-        except Exception:
-            pass
-    return None
-
-# Caricamento indicatori ufficiali Crypto con cache
 @st.cache_data
 def get_official_crypto_indicators(crypto_code):
     db_file = find_excel_file("DataBase.xlsx")
@@ -324,7 +353,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     
     col_sel1, col_sel2, col_sel3 = st.columns([2, 1, 1])
     selected_country = col_sel1.selectbox("Seleziona ETF Paese da Analizzare:", df_all["Paese"].tolist())
-    chart_type = col_sel2.radio("Tipo Grafico:", ["Candele (Candlestick)", "Linea"], horizontal=True)
+    chart_type = col_sel2.radio("Tipo Grafico:", ["Linea", "Candele (Candlestick)"], horizontal=True)
     is_log = col_sel3.checkbox("Scala Logaritmica", value=True)
     
     horizon_etf = st.radio("Orizzonte Temporale:", ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], index=6, horizontal=True, key="h_etf_uni")
@@ -333,14 +362,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     ticker = row_country["Ticker_YF"]
     sheet_name = row_country["Sheet_ETF"]
     
-    df_chart = load_etf_history_from_file(sheet_name)
-    if df_chart is None and yf is not None:
-        try:
-            df_yf = yf.Ticker(ticker).history(period="max")
-            if not df_yf.empty:
-                df_chart = df_yf.reset_index().rename(columns={'Close': 'Close', 'Open': 'Open', 'High': 'High', 'Low': 'Low'})
-        except Exception:
-            pass
+    df_chart = load_etf_history_from_file(sheet_name, ticker=ticker)
             
     if df_chart is not None and not df_chart.empty:
         df_chart_filt, p_start_etf, p_end_etf, ret_pct_etf = filter_by_horizon(df_chart, horizon_etf)
@@ -372,11 +394,13 @@ elif modulo == "🔄 Correlazione ETF":
     else:
         s1 = df_all[df_all["Paese"] == etf1_name].iloc[0]["Sheet_ETF"]
         s2 = df_all[df_all["Paese"] == etf2_name].iloc[0]["Sheet_ETF"]
+        t1 = df_all[df_all["Paese"] == etf1_name].iloc[0]["Ticker_YF"]
+        t2 = df_all[df_all["Paese"] == etf2_name].iloc[0]["Ticker_YF"]
         
         with st.spinner(f"Calcolo della correlazione tra {etf1_name} e {etf2_name}..."):
             try:
-                df1 = load_etf_history_from_file(s1)
-                df2 = load_etf_history_from_file(s2)
+                df1 = load_etf_history_from_file(s1, ticker=t1)
+                df2 = load_etf_history_from_file(s2, ticker=t2)
                 
                 if df1 is not None and df2 is not None:
                     merged = pd.merge(df1[['Date', 'Close']], df2[['Date', 'Close']], on='Date', suffixes=('_1', '_2')).dropna()
@@ -384,8 +408,6 @@ elif modulo == "🔄 Correlazione ETF":
                     merged['Ret2'] = merged['Close_2'].pct_change()
                     corr_val = merged['Ret1'].corr(merged['Ret2'])
                 else:
-                    t1 = df_all[df_all["Paese"] == etf1_name].iloc[0]["Ticker_YF"]
-                    t2 = df_all[df_all["Paese"] == etf2_name].iloc[0]["Ticker_YF"]
                     data_pair = yf.download([t1, t2], period="1y")['Close'].pct_change().dropna()
                     corr_val = data_pair[t1].corr(data_pair[t2])
                 
@@ -463,22 +485,12 @@ elif modulo == "⏳ Simulatore di Backtest Personalizzato":
                         for asset in selected_assets:
                             if asset in all_etfs:
                                 sheet_n = df_all[df_all["Paese"] == asset].iloc[0]["Sheet_ETF"]
-                                df_a = load_etf_history_from_file(sheet_n)
-                                if df_a is None and yf is not None:
-                                    t_y = df_all[df_all["Paese"] == asset].iloc[0]["Ticker_YF"]
-                                    df_a = yf.Ticker(t_y).history(period="max").reset_index().rename(columns={'Close': 'Close', 'Open': 'Open', 'High': 'High', 'Low': 'Low'})
+                                t_y = df_all[df_all["Paese"] == asset].iloc[0]["Ticker_YF"]
+                                df_a = load_etf_history_from_file(sheet_n, ticker=t_y)
                             elif asset == "Bitcoin (BTC)":
                                 df_a = load_crypto_history_from_file("BTC")
-                                if df_a is None and yf is not None:
-                                    df_a = yf.Ticker("BTC-USD").history(period="max", interval="1wk").reset_index().rename(columns={'Close': 'Close', 'Open': 'Open', 'High': 'High', 'Low': 'Low'})
-                                    df_a['Date'] = strip_timezone(df_a['Date'])
-                                    df_a = ensure_weekly(df_a)
                             elif asset == "Ethereum (ETH)":
                                 df_a = load_crypto_history_from_file("ETH")
-                                if df_a is None and yf is not None:
-                                    df_a = yf.Ticker("ETH-USD").history(period="max", interval="1wk").reset_index().rename(columns={'Close': 'Close', 'Open': 'Open', 'High': 'High', 'Low': 'Low'})
-                                    df_a['Date'] = strip_timezone(df_a['Date'])
-                                    df_a = ensure_weekly(df_a)
                             
                             if df_a is not None and not df_a.empty:
                                 df_a['Date'] = strip_timezone(df_a['Date'])
@@ -554,30 +566,21 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     
     col_cr1, col_cr2, col_cr3 = st.columns([2, 1, 1])
     selected_crypto = col_cr1.selectbox("Seleziona Crypto da Analizzare:", ["Bitcoin (BTC)", "Ethereum (ETH)"])
-    c_chart_type = col_cr2.radio("Tipo Grafico Crypto:", ["Candele (Candlestick)", "Linea"], horizontal=True, key="c_type")
+    c_chart_type = col_cr2.radio("Tipo Grafico Crypto:", ["Linea", "Candele (Candlestick)"], horizontal=True, key="c_type")
     c_is_log = col_cr3.checkbox("Scala Logaritmica", value=True, key="c_log")
     
     horizon_crypto = st.radio("Orizzonte Temporale Crypto:", ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], index=6, horizontal=True, key="h_crypto")
     
     code_sel = "BTC" if "BTC" in selected_crypto else "ETH"
-    symbol_display = "BTC-USD" if code_sel == "BTC" else "ETH-USD"
     
     df_crypto_chart = load_crypto_history_from_file(code_sel)
-    if df_crypto_chart is None and yf is not None:
-        try:
-            df_yf_c = yf.Ticker(symbol_display).history(period="max", interval="1wk")
-            if not df_yf_c.empty:
-                df_yf_c = df_yf_c.reset_index().rename(columns={'Close': 'Close', 'Open': 'Open', 'High': 'High', 'Low': 'Low'})
-                df_crypto_chart = ensure_weekly(df_yf_c)
-        except Exception:
-            pass
             
     if df_crypto_chart is not None and not df_crypto_chart.empty:
         df_crypto_filt, p_start_cr, p_end_cr, ret_pct_cr = filter_by_horizon(df_crypto_chart, horizon_crypto)
         
         st.metric(f"Performance {selected_crypto} ({horizon_crypto})", f"{ret_pct_cr:+.2f}%", f"Prezzo finale: ${p_end_cr:,.2f}")
         
-        fig_crypto_pro = build_pro_chart(df_crypto_filt, f"Grafico Settimanale Candele {selected_crypto} — Periodo: {horizon_crypto}", chart_type=c_chart_type, is_log=c_is_log)
+        fig_crypto_pro = build_pro_chart(df_crypto_filt, f"Grafico Storico {selected_crypto} — Periodo: {horizon_crypto}", chart_type=c_chart_type, is_log=c_is_log)
         st.plotly_chart(fig_crypto_pro, use_container_width=True)
     else:
         st.warning(f"Grafico non disponibile per {selected_crypto}.")
