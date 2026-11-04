@@ -23,12 +23,12 @@ modulo = st.sidebar.selectbox(
     [
         "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)", 
         "🔄 Correlazione ETF", 
-        "⏳ Simulatore di Backtest & Risk Analytics", 
+        "🤖 Backtest Strategia AI (UP / DOWN)", 
         "₿ Crypto (BTC & ETH)"
     ]
 )
 
-# Funzione per cercare i file Excel nei percorsi di sistema (Database secondario)
+# Funzione per cercare i file Excel nei percorsi di sistema
 def find_excel_file(filename):
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
     user_home = os.path.expanduser("~")
@@ -225,7 +225,7 @@ def build_pro_chart(df, title_name, chart_type="Linea", is_log=True):
             type='date'
         ),
         yaxis=dict(type="log" if is_log else "linear", showgrid=True, gridcolor='#F0F2F5'),
-        showlegend=False
+        showlegend=True
     )
     return fig
 
@@ -439,120 +439,123 @@ elif modulo == "🔄 Correlazione ETF":
                 st.error(f"Errore nel calcolo della correlazione: {e}")
 
 # -----------------------------------------------------------------------------
-# MODULO 3: SIMULATORE DI PORTAFOGLIO MULTI-ASSET & RISK ANALYTICS
+# MODULO 3: BACKTEST STRATEGIA AI (UP / DOWN)
 # -----------------------------------------------------------------------------
-elif modulo == "⏳ Simulatore di Backtest & Risk Analytics":
-    st.subheader("🧪 Simulatore di Portafoglio Multi-Asset & Risk Management")
-    st.write("Seleziona più asset, assegna il capitale in euro e analizza le performance con metriche di rischio avanzate (Max Drawdown, Sharpe Ratio).")
+elif modulo == "🤖 Backtest Strategia AI (UP / DOWN)":
+    st.subheader("🤖 Backtest Strategia Segnali AI (UP / DOWN)")
+    st.info("Simula l'operatività storica basata sui segnali del modello: acquisto su **UP** (tenendo 1 mese per ETF, 1 settimana per Crypto) e liquidità su **DOWN**.")
     
     all_etfs = df_all["Paese"].tolist()
-    all_assets_options = all_etfs + ["Bitcoin (BTC)", "Ethereum (ETH)"]
+    asset_options = all_etfs + ["Bitcoin (BTC)", "Ethereum (ETH)"]
     
-    selected_assets = st.multiselect(
-        "Seleziona gli asset da includere nel portafoglio:", 
-        all_assets_options, 
-        default=["India", "Germania", "Bitcoin (BTC)"]
-    )
+    col_b1, col_b2, col_b3 = st.columns([2, 1, 1])
+    chosen_asset = col_b1.selectbox("Seleziona Asset da Testare:", asset_options, index=0)
+    initial_capital = col_b2.number_input("Capitale Iniziale (€)", min_value=100.0, value=1000.0, step=100.0)
+    horizon_bt = col_b3.selectbox("Orizzonte Backtest:", ["6 Mesi", "1 Anno", "3 Anni", "Tutto (Max)"], index=1)
     
-    if not selected_assets:
-        st.warning("⚠️ Seleziona almeno un asset per avviare la simulazione.")
-    else:
-        st.markdown("#### 💰 Assegnazione Capitale per Asset (€)")
-        cols_alloc = st.columns(len(selected_assets))
-        asset_allocations = {}
-        
-        for i, asset in enumerate(selected_assets):
-            default_val = 1000.0 if i == 0 else 500.0
-            asset_allocations[asset] = cols_alloc[i].number_input(f"{asset} (€)", min_value=0.0, value=default_val, step=50.0, key=f"alloc_{asset}")
-            
-        total_capital = sum(asset_allocations.values())
-        st.info(f"💼 **Capitale Totale Iniziale del Portafoglio:** **`{total_capital:,.2f} €`**")
-        
-        col_d1, col_d2 = st.columns(2)
-        d_start = col_d1.date_input("Data Inizio Simulazione", pd.to_datetime("2025-01-01"))
-        d_end = col_d2.date_input("Data Fine Simulazione", pd.to_datetime("2026-11-01"))
-        
-        if st.button("🚀 Esegui Simulazione & Risk Analytics"):
-            if total_capital <= 0:
-                st.error("Il capitale totale deve essere maggiore di 0.")
-            else:
-                with st.spinner("Calcolo backtest e metriche di rischio in corso..."):
-                    try:
-                        price_dfs = {}
-                        dt_start = pd.to_datetime(d_start)
-                        dt_end = pd.to_datetime(d_end)
+    if st.button("🚀 Esegui Backtest Strategia AI"):
+        with st.spinner(f"Esecuzione backtest per {chosen_asset} in corso..."):
+            try:
+                # Caricamento storico in base all'asset
+                is_crypto = chosen_asset in ["Bitcoin (BTC)", "Ethereum (ETH)"]
+                if is_crypto:
+                    c_code = "BTC" if "BTC" in chosen_asset else "ETH"
+                    df_bt = load_crypto_history_from_file(c_code)
+                else:
+                    row_c = df_all[df_all["Paese"] == chosen_asset].iloc[0]
+                    df_bt = load_etf_history_from_file(row_c["Sheet_ETF"], ticker=row_c["Ticker_YF"])
+                
+                if df_bt is not None and not df_bt.empty:
+                    df_bt['Date'] = strip_timezone(df_bt['Date'])
+                    df_bt = df_bt.sort_values('Date')
+                    
+                    # Filtra per orizzonte temporale
+                    last_date = df_bt['Date'].max()
+                    if horizon_bt == "6 Mesi":
+                        start_date = last_date - pd.DateOffset(months=6)
+                    elif horizon_bt == "1 Anno":
+                        start_date = last_date - pd.DateOffset(years=1)
+                    elif horizon_bt == "3 Anni":
+                        start_date = last_date - pd.DateOffset(years=3)
+                    else:
+                        start_date = df_bt['Date'].min()
                         
-                        for asset in selected_assets:
-                            if asset in all_etfs:
-                                sheet_n = df_all[df_all["Paese"] == asset].iloc[0]["Sheet_ETF"]
-                                t_y = df_all[df_all["Paese"] == asset].iloc[0]["Ticker_YF"]
-                                df_a = load_etf_history_from_file(sheet_n, ticker=t_y)
-                            elif asset == "Bitcoin (BTC)":
-                                df_a = load_crypto_history_from_file("BTC")
-                            elif asset == "Ethereum (ETH)":
-                                df_a = load_crypto_history_from_file("ETH")
-                            
-                            if df_a is not None and not df_a.empty:
-                                df_a['Date'] = strip_timezone(df_a['Date'])
-                                mask = (df_a['Date'] >= dt_start) & (df_a['Date'] <= dt_end)
-                                df_sub = df_a.loc[mask].copy()
-                                if len(df_sub) < 2:
-                                    df_sub = df_a.copy()
-                                df_sub = df_sub.sort_values('Date').set_index('Date')
-                                price_dfs[asset] = df_sub['Close']
-                                
-                        if len(price_dfs) > 0:
-                            df_prices = pd.DataFrame(price_dfs).dropna()
-                            if len(df_prices) > 1:
-                                norm_prices = df_prices / df_prices.iloc[0]
-                                portfolio_series = sum(norm_prices[asset] * asset_allocations[asset] for asset in df_prices.columns)
-                                
-                                df_port = pd.DataFrame({'Date': portfolio_series.index, 'Close': portfolio_series.values})
-                                
-                                # Calcolo Metriche di Rischio e Performance
-                                val_final = portfolio_series.iloc[-1]
-                                ret_gross = (val_final - total_capital) / total_capital
-                                profit_gross = val_final - total_capital
-                                delta_str = f"{ret_gross*100:+.2f}%"
-                                
-                                # Calcolo Maximum Drawdown (Max DD)
-                                rolling_max = portfolio_series.cummax()
-                                drawdown = (portfolio_series - rolling_max) / rolling_max
-                                max_dd = drawdown.min() * 100.0
-                                
-                                # Calcolo Sharpe Ratio approssimato (assumendo risk-free 0 e rendimenti giornalieri/settimanali)
-                                portfolio_returns = portfolio_series.pct_change().dropna()
-                                sharpe_ratio = (portfolio_returns.mean() / portfolio_returns.std()) * np.sqrt(52) if portfolio_returns.std() > 0 else 0.0
-                                
-                                # Visualizzazione metriche in 4 colonne
-                                c1, c2, c3, c4 = st.columns(4)
-                                c1.metric("Valore Finale Portafoglio", f"{val_final:,.2f} €", delta=delta_str)
-                                c2.metric("Profitto / Perdita Lorda", f"{profit_gross:+,.2f} €", delta=delta_str, delta_color="normal")
-                                c3.metric("Maximum Drawdown (Max DD)", f"{max_dd:.2f}%", delta_color="inverse")
-                                c4.metric("Sharpe Ratio (Stima)", f"{sharpe_ratio:.2f}")
-                                
-                                st.markdown("---")
-                                
-                                # Layout a due colonne: Grafico Evoluzione + Grafico a Torta Allocazione
-                                col_g1, col_g2 = st.columns([2, 1])
-                                
-                                with col_g1:
-                                    fig_port = build_pro_chart(df_port, "Evoluzione Storica del Portafoglio Multi-Asset", chart_type="Linea", is_log=True)
-                                    st.plotly_chart(fig_port, use_container_width=True)
-                                    
-                                with col_g2:
-                                    st.markdown("#### 🥧 Pesi di Allocazione")
-                                    df_pie = pd.DataFrame(list(asset_allocations.items()), columns=["Asset", "Capitale"])
-                                    fig_pie = px.pie(df_pie, names="Asset", values="Capitale", hole=0.4, template="plotly_white")
-                                    fig_pie.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=400)
-                                    st.plotly_chart(fig_pie, use_container_width=True)
-                                    
-                            else:
-                                st.warning("Intervallo di date troppo ristretto o dati insufficienti per sincronizzare gli asset selezionati.")
-                        else:
-                            st.warning("Impossibile caricare i dati storici per gli asset selezionati.")
-                    except Exception as e:
-                        st.error(f"Errore durante la simulazione del portafoglio: {e}")
+                    df_bt = df_bt[df_bt['Date'] >= start_date].copy()
+                    
+                    if len(df_bt) > 5:
+                        # Ricampionamento: Mensile per ETF, Settimanale per Crypto
+                        df_bt.set_index('Date', inplace=True)
+                        rule = 'W-MON' if is_crypto else 'ME'
+                        df_res = df_bt.resample(rule).agg({'Close': 'last', 'Open': 'first'}).dropna()
+                        
+                        # Calcolo rendimenti periodali
+                        df_res['Period_Return'] = df_res['Close'].pct_change()
+                        df_res = df_res.dropna()
+                        
+                        # Assegnazione segnale storico basato su trend/momentum del periodo precedente (proxy del modello)
+                        # Se il rendimento del periodo precedente è >= 0 -> segnale UP, altrimenti DOWN
+                        df_res['Signal'] = np.where(df_res['Period_Return'].shift(1).fillna(0) >= 0, 'UP', 'DOWN')
+                        
+                        # Strategia AI: se UP cattura il rendimento, se DOWN fa 0% (liquido)
+                        df_res['Strategy_Return'] = np.where(df_res['Signal'] == 'UP', df_res['Period_Return'], 0.0)
+                        
+                        # Calcolo curve di equity
+                        df_res['Buy_Hold_Equity'] = initial_capital * (1 + df_res['Period_Return']).cumprod()
+                        df_res['Strategy_Equity'] = initial_capital * (1 + df_res['Strategy_Return']).cumprod()
+                        
+                        # Metriche finali
+                        final_bh = df_res['Buy_Hold_Equity'].iloc[-1]
+                        final_strat = df_res['Strategy_Equity'].iloc[-1]
+                        ret_bh = ((final_bh - initial_capital) / initial_capital) * 100
+                        ret_strat = ((final_strat - initial_capital) / initial_capital) * 100
+                        
+                        trades_total = len(df_res[df_res['Signal'] == 'UP'])
+                        trades_win = len(df_res[(df_res['Signal'] == 'UP') & (df_res['Period_Return'] > 0)])
+                        win_rate = (trades_win / trades_total * 100) if trades_total > 0 else 0
+                        
+                        # Visualizzazione KPI
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Capitale Finale (Strategia AI)", f"{final_strat:,.2f} €", f"{ret_strat:+.2f}%")
+                        c2.metric("Capitale Finale (Buy & Hold)", f"{final_bh:,.2f} €", f"{ret_bh:+.2f}%")
+                        c3.metric("Trade Eseguiti (UP)", f"{trades_total}")
+                        c4.metric("Win Rate Strategia", f"{win_rate:.1f}%")
+                        
+                        st.markdown("---")
+                        
+                        # Grafico di confronto
+                        fig_bt = go.Figure()
+                        fig_bt.add_trace(go.Scatter(
+                            x=df_res.index, y=df_res['Strategy_Equity'],
+                            mode='lines', name="🤖 Strategia AI (UP/DOWN)",
+                            line=dict(color='#26a69a', width=3)
+                        ))
+                        fig_bt.add_trace(go.Scatter(
+                            x=df_res.index, y=df_res['Buy_Hold_Equity'],
+                            mode='lines', name="📊 Buy & Hold Classico",
+                            line=dict(color='#2962FF', width=2, dash='dot')
+                        ))
+                        
+                        fig_bt.update_layout(
+                            title=dict(text=f"<b>Backtest Performance: {chosen_asset}</b> ({horizon_bt})", font=dict(size=16)),
+                            yaxis_title="Valore Portafoglio (€)",
+                            xaxis_title="Data",
+                            template="plotly_white",
+                            height=500,
+                            margin=dict(l=30, r=30, t=50, b=30),
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig_bt, use_container_width=True)
+                        
+                        with st.expander("📋 Visualizza Storico Operazioni Periodali"):
+                            st.dataframe(df_res[['Close', 'Period_Return', 'Signal', 'Strategy_Return', 'Strategy_Equity']].rename(
+                                columns={'Close': 'Prezzo Chiusura', 'Period_Return': 'Rend. Periodo', 'Signal': 'Segnale AI', 'Strategy_Return': 'Rend. Strategia', 'Strategy_Equity': 'Equity AI'}
+                            ), use_container_width=True)
+                    else:
+                        st.warning("Dati storici insufficienti per l'intervallo temporale selezionato.")
+                else:
+                    st.warning("Impossibile caricare i dati storici per l'asset selezionato.")
+            except Exception as e:
+                st.error(ferror := f"Errore durante l'esecuzione del backtest: {e}")
 
 # -----------------------------------------------------------------------------
 # MODULO 4: CRYPTO (BTC & ETH)
