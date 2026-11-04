@@ -175,6 +175,21 @@ meta_etfs = {
     "Indonesia": {"Ticker_YF": "EIDO", "Sheet_ETF": "Indonesia"}
 }
 
+def clean_country_name(name):
+    n = str(name).strip().lower()
+    n = re.sub(r'[^a-z0-9]', '', n)
+    aliases = {
+        "uk": "regnounito",
+        "unitedkingdom": "regnounito",
+        "usa": "america",
+        "unitedstates": "america",
+        "us": "america",
+        "southkorea": "coreadelsud",
+        "korea": "coreadelsud",
+        "southafrica": "sudafrica"
+    }
+    return aliases.get(n, n)
+
 @st.cache_data
 def load_forecast_from_excel():
     db_file = find_excel_file("DataBase.xlsx")
@@ -188,50 +203,54 @@ def load_forecast_from_excel():
             sheet_macro_name = [s for s in xls_db.sheet_names if 'macro' in s.lower() or 'paesi' in s.lower()]
             if sheet_macro_name:
                 df_macro = pd.read_excel(xls_db, sheet_name=sheet_macro_name[0])
-                cols_original = list(df_macro.columns)
-                cols_lower = [str(c).strip().lower() for c in cols_original]
+                cols = list(df_macro.columns)
+                cols_lower = [str(c).strip().lower() for c in cols]
                 
-                # Identifica indici di colonna con fallback automatico
+                # Trova colonne chiave
                 col_p_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['paese', 'country', 'nazione', 'etf', 'asset'])), 0)
                 col_v_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['voto', 'score', 'macro', 'rating', 'valutazione'])), None)
                 col_pil_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['pil', 'gdp'])), None)
                 col_pmi_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['pmi'])), None)
                 
+                # Fallback intelligente se le intestazioni hanno nomi diversi
                 if col_v_idx is None:
-                    for i in range(min(5, len(cols_lower))):
-                        if i != col_p_idx:
+                    for i, col_name in enumerate(cols):
+                        if i != col_p_idx and pd.api.types.is_numeric_dtype(df_macro[col_name]):
                             col_v_idx = i
                             break
-
+                            
                 for _, row in df_macro.iterrows():
                     p_val = row.iloc[col_p_idx]
                     if pd.isna(p_val):
                         continue
-                    p_name_clean = str(p_val).strip().lower()
+                    p_key = clean_country_name(p_val)
                     
-                    voto_v = 2.50
+                    # Estrazione Voto Macro
+                    voto_v = None
                     if col_v_idx is not None and pd.notna(row.iloc[col_v_idx]):
                         try:
                             voto_v = float(row.iloc[col_v_idx])
                         except (ValueError, TypeError):
-                            voto_v = 2.50
+                            voto_v = None
                     
-                    pil_v = "+2.0%"
+                    # Estrazione PIL
+                    pil_v = "N/A"
                     if col_pil_idx is not None and pd.notna(row.iloc[col_pil_idx]):
-                        pil_raw = row.iloc[col_pil_idx]
-                        if isinstance(pil_raw, (int, float)):
-                            pil_v = f"{pil_raw:+.2f}%"
+                        raw_pil = row.iloc[col_pil_idx]
+                        if isinstance(raw_pil, (int, float)):
+                            pil_v = f"{raw_pil:+.2f}%"
                         else:
-                            pil_v = str(pil_raw).strip()
-                    
-                    pmi_v = 52.0
+                            pil_v = str(raw_pil).strip()
+                            
+                    # Estrazione PMI
+                    pmi_v = 50.0
                     if col_pmi_idx is not None and pd.notna(row.iloc[col_pmi_idx]):
                         try:
                             pmi_v = float(row.iloc[col_pmi_idx])
                         except (ValueError, TypeError):
-                            pmi_v = 52.0
-                        
-                    macro_data_dict[p_name_clean] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
+                            pmi_v = 50.0
+                            
+                    macro_data_dict[p_key] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
         except Exception:
             pass
 
@@ -252,19 +271,11 @@ def load_forecast_from_excel():
                 
                 meta = meta_etfs.get(paese, {"Ticker_YF": "SPY", "Sheet_ETF": paese})
                 
-                # Match flessibile del Paese nel dizionario macro
-                macro_info = macro_data_dict.get(paese.lower(), None)
-                if macro_info is None:
-                    for k_macro, v_macro in macro_data_dict.items():
-                        if k_macro in paese.lower() or paese.lower() in k_macro:
-                            macro_info = v_macro
-                            break
-                if macro_info is None:
-                    macro_info = {"Voto": 2.50, "PIL": "+2.0%", "PMI": 52.0}
-                    
+                p_key = clean_country_name(paese)
+                macro_info = macro_data_dict.get(p_key, {"Voto": 2.50, "PIL": "N/A", "PMI": 50.0})
+                
                 is_bl = paese in BLACKLIST_OOS
                 
-                # Calcolo dinamico RSI e Momentum da Yahoo Finance / File Storico
                 df_h = load_etf_history_from_file(meta["Sheet_ETF"], ticker=meta["Ticker_YF"])
                 rsi_val = 50.0
                 mom1m_val = "0.0%"
@@ -285,19 +296,22 @@ def load_forecast_from_excel():
                         m3 = ((close_s.iloc[-1] - close_s.iloc[-63]) / close_s.iloc[-63]) * 100
                         mom3m_val = f"{m3:+.2f}%"
 
-                # Sintesi dinamica basata sul Voto Macro reale e RSI
+                # Sintesi dinamica basata sul Voto Macro Reale estratto
+                voto_macro_val = macro_info["Voto"]
                 if is_bl:
                     sintesi_text = "⛔ Escluso (Acc. < 50%)"
                 elif rsi_val > 75:
                     sintesi_text = "Forte (RSI Alto)"
-                elif macro_info["Voto"] >= 2.8:
+                elif voto_macro_val is not None and voto_macro_val >= 2.8:
                     sintesi_text = "Massima Confluenza"
-                elif macro_info["Voto"] >= 2.5:
+                elif voto_macro_val is not None and voto_macro_val >= 2.0:
                     sintesi_text = "Forte Confluenza"
-                elif macro_info["Voto"] < 0:
+                elif voto_macro_val is not None and voto_macro_val < 0:
                     sintesi_text = "Debole / Sconsigliato"
                 else:
                     sintesi_text = "Supportato"
+                
+                voto_display = round(voto_macro_val, 2) if voto_macro_val is not None else "N/A"
                 
                 records.append({
                     "Paese": paese, 
@@ -307,7 +321,7 @@ def load_forecast_from_excel():
                     "Stato OOS": "⛔ Escluso (Acc. < 50%)" if is_bl else "✅ Valido",
                     "Ticker_YF": meta["Ticker_YF"], 
                     "Sheet_ETF": meta["Sheet_ETF"], 
-                    "Voto_Macro": round(macro_info["Voto"], 2),
+                    "Voto_Macro": voto_display,
                     "PIL": macro_info["PIL"],
                     "PMI": macro_info["PMI"],
                     "RSI": rsi_val,
