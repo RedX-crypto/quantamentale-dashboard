@@ -195,15 +195,12 @@ def load_forecast_from_excel():
     db_file = find_excel_file("DataBase.xlsx")
     records = []
     
-    # 1. Caricamento dei Dati Macro dal foglio 'Macro Paesi 3M' con la struttura REALE del file
     macro_data_dict = {}
     if db_file:
         try:
             df_macro = pd.read_excel(db_file, sheet_name="Macro Paesi 3M")
-            # Eliminiamo le righe senza Voto (es. righe 2027 future non compilate)
             df_macro_valid = df_macro.dropna(subset=['Voto', 'Country']).copy()
             
-            # Se ci sono più righe per lo stesso paese, prendiamo la più recente (ordinata per Data)
             if 'Data' in df_macro_valid.columns:
                 df_macro_valid['Data'] = pd.to_datetime(df_macro_valid['Data'])
                 df_macro_valid = df_macro_valid.sort_values('Data')
@@ -216,14 +213,12 @@ def load_forecast_from_excel():
                 
                 voto_v = float(row['Voto']) if pd.notna(row['Voto']) else 2.50
                 
-                # Format PIL
                 pil_raw = row['PIL'] if 'PIL' in row and pd.notna(row['PIL']) else 0.02
                 if isinstance(pil_raw, (int, float)):
                     pil_v = f"{pil_raw * 100:+.2f}%" if abs(pil_raw) < 1 else f"{pil_raw:+.2f}%"
                 else:
                     pil_v = str(pil_raw).strip()
                     
-                # Format PMI (la colonna reale si chiama 'PMI manif.')
                 pmi_col = [c for c in df_latest.columns if 'pmi' in str(c).lower()][0]
                 pmi_raw = row[pmi_col] if pd.notna(row[pmi_col]) else 50.0
                 try:
@@ -235,7 +230,6 @@ def load_forecast_from_excel():
         except Exception:
             pass
 
-    # 2. Caricamento dal foglio 'Forecast'
     if db_file:
         try:
             df_fc = pd.read_excel(db_file, sheet_name="Forecast")
@@ -273,7 +267,6 @@ def load_forecast_from_excel():
                         m3 = ((close_s.iloc[-1] - close_s.iloc[-63]) / close_s.iloc[-63]) * 100
                         mom3m_val = f"{m3:+.2f}%"
 
-                # Sintesi dinamica basata sul Voto Macro Reale letto dal tuo Excel
                 voto_macro_val = macro_info["Voto"]
                 if is_bl:
                     sintesi_text = "⛔ Escluso (Acc. < 50%)"
@@ -379,19 +372,22 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     
     st.dataframe(df_all[["Paese", "Esito AI", "Allocazione", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]], use_container_width=True)
     
-    # Card / Nuovolette di sintesi rapida
+    # Card / Nuvolette di sintesi rapida
     st.markdown("---")
     c_n1, c_n2, c_n3, c_n4 = st.columns(4)
     c_n1.metric("Max Momentum 1M", "Indonesia", "+10.02%")
-    c_n2.metric("Filtro Ipercomprato", "USA & Canada", "RSI > 77-78")
     
-    # Logica di selezione corretta per Top Pick e Worst Pick
+    # Filtro Ipercomprato: delta_color="inverse" per renderlo ROSSO quando sale
+    c_n2.metric("Filtro Ipercomprato", "USA & Canada", "RSI > 77-78", delta="RSI Alto", delta_color="inverse")
+    
     top_pick = df_all.iloc[0]
     down_candidates = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
     worst_pick = down_candidates.iloc[0] if not down_candidates.empty else df_all.iloc[-1]
     
     c_n3.metric("Top Pick AI (Migliore)", top_pick["Paese"], top_pick["Esito AI"])
-    c_n4.metric("Worst Pick AI (Sconsigliato)", worst_pick["Paese"], worst_pick["Esito AI"])
+    
+    # Worst Pick AI: delta_color="inverse" per renderlo ROSSO (indicando ribasso/sconsigliato)
+    c_n4.metric("Worst Pick AI (Sconsigliato)", worst_pick["Paese"], worst_pick["Esito AI"], delta="- Rischio Down", delta_color="inverse")
     
     st.markdown("---")
     st.subheader("📈 Grafico Storico Avanzato ETF Paese")
