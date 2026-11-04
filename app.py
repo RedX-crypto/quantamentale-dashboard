@@ -348,7 +348,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     c_n1.metric("Max Momentum 1M", "Indonesia", "+10.02%")
     c_n2.metric("Filtro Ipercomprato", "USA & Canada", "RSI > 77-78")
     
-    # Selection logic for Top and Worst Picks
+    # Logica di selezione corretta per Top Pick e Worst Pick
     top_pick = df_all.iloc[0]
     down_candidates = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
     worst_pick = down_candidates.iloc[0] if not down_candidates.empty else df_all.iloc[-1]
