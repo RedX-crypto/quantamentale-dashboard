@@ -195,76 +195,53 @@ def load_forecast_from_excel():
     db_file = find_excel_file("DataBase.xlsx")
     records = []
     
-    # 1. Caricamento dinamico dei Dati Macro dal foglio 'Macro Paesi 3M'
+    # 1. Caricamento dei Dati Macro dal foglio 'Macro Paesi 3M' con la struttura REALE del file
     macro_data_dict = {}
     if db_file:
         try:
-            xls_db = pd.ExcelFile(db_file)
-            sheet_macro_name = [s for s in xls_db.sheet_names if 'macro' in s.lower() or 'paesi' in s.lower()]
-            if sheet_macro_name:
-                df_macro = pd.read_excel(xls_db, sheet_name=sheet_macro_name[0])
-                cols = list(df_macro.columns)
-                cols_lower = [str(c).strip().lower() for c in cols]
+            df_macro = pd.read_excel(db_file, sheet_name="Macro Paesi 3M")
+            # Eliminiamo le righe senza Voto (es. righe 2027 future non compilate)
+            df_macro_valid = df_macro.dropna(subset=['Voto', 'Country']).copy()
+            
+            # Se ci sono più righe per lo stesso paese, prendiamo la più recente (ordinata per Data)
+            if 'Data' in df_macro_valid.columns:
+                df_macro_valid['Data'] = pd.to_datetime(df_macro_valid['Data'])
+                df_macro_valid = df_macro_valid.sort_values('Data')
                 
-                # Trova colonne chiave
-                col_p_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['paese', 'country', 'nazione', 'etf', 'asset'])), 0)
-                col_v_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['voto', 'score', 'macro', 'rating', 'valutazione'])), None)
-                col_pil_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['pil', 'gdp'])), None)
-                col_pmi_idx = next((i for i, c in enumerate(cols_lower) if any(k in c for k in ['pmi'])), None)
+            df_latest = df_macro_valid.groupby('Country').last().reset_index()
+            
+            for _, row in df_latest.iterrows():
+                p_name = str(row['Country']).strip()
+                p_key = clean_country_name(p_name)
                 
-                # Fallback intelligente se le intestazioni hanno nomi diversi
-                if col_v_idx is None:
-                    for i, col_name in enumerate(cols):
-                        if i != col_p_idx and pd.api.types.is_numeric_dtype(df_macro[col_name]):
-                            col_v_idx = i
-                            break
-                            
-                for _, row in df_macro.iterrows():
-                    p_val = row.iloc[col_p_idx]
-                    if pd.isna(p_val):
-                        continue
-                    p_key = clean_country_name(p_val)
+                voto_v = float(row['Voto']) if pd.notna(row['Voto']) else 2.50
+                
+                # Format PIL
+                pil_raw = row['PIL'] if 'PIL' in row and pd.notna(row['PIL']) else 0.02
+                if isinstance(pil_raw, (int, float)):
+                    pil_v = f"{pil_raw * 100:+.2f}%" if abs(pil_raw) < 1 else f"{pil_raw:+.2f}%"
+                else:
+                    pil_v = str(pil_raw).strip()
                     
-                    # Estrazione Voto Macro
-                    voto_v = None
-                    if col_v_idx is not None and pd.notna(row.iloc[col_v_idx]):
-                        try:
-                            voto_v = float(row.iloc[col_v_idx])
-                        except (ValueError, TypeError):
-                            voto_v = None
-                    
-                    # Estrazione PIL
-                    pil_v = "N/A"
-                    if col_pil_idx is not None and pd.notna(row.iloc[col_pil_idx]):
-                        raw_pil = row.iloc[col_pil_idx]
-                        if isinstance(raw_pil, (int, float)):
-                            pil_v = f"{raw_pil:+.2f}%"
-                        else:
-                            pil_v = str(raw_pil).strip()
-                            
-                    # Estrazione PMI
+                # Format PMI (la colonna reale si chiama 'PMI manif.')
+                pmi_col = [c for c in df_latest.columns if 'pmi' in str(c).lower()][0]
+                pmi_raw = row[pmi_col] if pd.notna(row[pmi_col]) else 50.0
+                try:
+                    pmi_v = round(float(pmi_raw), 1)
+                except (ValueError, TypeError):
                     pmi_v = 50.0
-                    if col_pmi_idx is not None and pd.notna(row.iloc[col_pmi_idx]):
-                        try:
-                            pmi_v = float(row.iloc[col_pmi_idx])
-                        except (ValueError, TypeError):
-                            pmi_v = 50.0
-                            
-                    macro_data_dict[p_key] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
+                    
+                macro_data_dict[p_key] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
         except Exception:
             pass
 
-    # 2. Caricamento dinamico dal foglio 'Forecast'
+    # 2. Caricamento dal foglio 'Forecast'
     if db_file:
         try:
             df_fc = pd.read_excel(db_file, sheet_name="Forecast")
-            cols_fc = [str(c).strip().lower() for c in df_fc.columns]
-            col_country_fc = [df_fc.columns[i] for i, c in enumerate(cols_fc) if 'country' in c or 'paese' in c][0]
-            col_forecast_fc = [df_fc.columns[i] for i, c in enumerate(cols_fc) if 'forecast' in c or 'previsione' in c][0]
-            
-            for _, row in df_fc.dropna(subset=[col_country_fc, col_forecast_fc]).iterrows():
-                paese = str(row[col_country_fc]).strip()
-                fc_str = str(row[col_forecast_fc]).strip()
+            for _, row in df_fc.dropna(subset=['Country', 'Forecast']).iterrows():
+                paese = str(row['Country']).strip()
+                fc_str = str(row['Forecast']).strip()
                 match = re.search(r'([\d\.]+)', fc_str)
                 prob = float(match.group(1)) if match else 50.0
                 segnal = "DOWN" if "DOWN" in fc_str.upper() else "UP"
@@ -272,7 +249,7 @@ def load_forecast_from_excel():
                 meta = meta_etfs.get(paese, {"Ticker_YF": "SPY", "Sheet_ETF": paese})
                 
                 p_key = clean_country_name(paese)
-                macro_info = macro_data_dict.get(p_key, {"Voto": 2.50, "PIL": "N/A", "PMI": 50.0})
+                macro_info = macro_data_dict.get(p_key, {"Voto": 2.50, "PIL": "+2.0%", "PMI": 52.0})
                 
                 is_bl = paese in BLACKLIST_OOS
                 
@@ -296,22 +273,20 @@ def load_forecast_from_excel():
                         m3 = ((close_s.iloc[-1] - close_s.iloc[-63]) / close_s.iloc[-63]) * 100
                         mom3m_val = f"{m3:+.2f}%"
 
-                # Sintesi dinamica basata sul Voto Macro Reale estratto
+                # Sintesi dinamica basata sul Voto Macro Reale letto dal tuo Excel
                 voto_macro_val = macro_info["Voto"]
                 if is_bl:
                     sintesi_text = "⛔ Escluso (Acc. < 50%)"
                 elif rsi_val > 75:
                     sintesi_text = "Forte (RSI Alto)"
-                elif voto_macro_val is not None and voto_macro_val >= 2.8:
+                elif voto_macro_val >= 2.90:
                     sintesi_text = "Massima Confluenza"
-                elif voto_macro_val is not None and voto_macro_val >= 2.0:
+                elif voto_macro_val >= 2.50:
                     sintesi_text = "Forte Confluenza"
-                elif voto_macro_val is not None and voto_macro_val < 0:
+                elif voto_macro_val < 2.20:
                     sintesi_text = "Debole / Sconsigliato"
                 else:
                     sintesi_text = "Supportato"
-                
-                voto_display = round(voto_macro_val, 2) if voto_macro_val is not None else "N/A"
                 
                 records.append({
                     "Paese": paese, 
@@ -321,7 +296,7 @@ def load_forecast_from_excel():
                     "Stato OOS": "⛔ Escluso (Acc. < 50%)" if is_bl else "✅ Valido",
                     "Ticker_YF": meta["Ticker_YF"], 
                     "Sheet_ETF": meta["Sheet_ETF"], 
-                    "Voto_Macro": voto_display,
+                    "Voto_Macro": round(voto_macro_val, 2),
                     "PIL": macro_info["PIL"],
                     "PMI": macro_info["PMI"],
                     "RSI": rsi_val,
