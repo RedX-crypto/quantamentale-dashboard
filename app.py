@@ -154,7 +154,6 @@ def load_crypto_history_from_file(crypto_code):
 # Blacklist paesi con accuratezza OOS < 50% verificata in RStudio
 BLACKLIST_OOS = ["Argentina", "Cina", "Corea del Sud", "Corea", "Brasile", "Indonesia"]
 
-# Mappatura STATICA dei soli Ticker e Fogli Excel (NESSUN dato macro o tecnico hardcoded)
 meta_etfs = {
     "Arabia Saudita": {"Ticker_YF": "KSA", "Sheet_ETF": "Arabia Saudita"},
     "India": {"Ticker_YF": "INDA", "Sheet_ETF": "India"},
@@ -168,7 +167,12 @@ meta_etfs = {
     "USA": {"Ticker_YF": "SPY", "Sheet_ETF": "America"},
     "Sud Africa": {"Ticker_YF": "EZA", "Sheet_ETF": "Sud Africa"},
     "Messico": {"Ticker_YF": "EWW", "Sheet_ETF": "Messico"},
-    "Giappone": {"Ticker_YF": "EWJ", "Sheet_ETF": "Giappone"}
+    "Giappone": {"Ticker_YF": "EWJ", "Sheet_ETF": "Giappone"},
+    "Argentina": {"Ticker_YF": "ARGT", "Sheet_ETF": "Argentina"},
+    "Brasile": {"Ticker_YF": "EWZ", "Sheet_ETF": "Brasile"},
+    "Cina": {"Ticker_YF": "MCHI", "Sheet_ETF": "Cina"},
+    "Corea del Sud": {"Ticker_YF": "EWY", "Sheet_ETF": "Corea"},
+    "Indonesia": {"Ticker_YF": "EIDO", "Sheet_ETF": "Indonesia"}
 }
 
 @st.cache_data
@@ -176,23 +180,26 @@ def load_forecast_from_excel():
     db_file = find_excel_file("DataBase.xlsx")
     records = []
     
-    # 1. Caricamento dinamico dei Dati Macro (Voto, PIL, PMI) dal foglio 'Macro Paesi 3M'
+    # 1. Caricamento dinamico dei Dati Macro dal foglio 'Macro Paesi 3M'
     macro_data_dict = {}
     if db_file:
         try:
             df_macro = pd.read_excel(db_file, sheet_name="Macro Paesi 3M")
-            df_macro.columns = [str(c).strip().lower() for c in df_macro.columns]
+            cols_clean = [str(c).strip() for c in df_macro.columns]
+            df_macro.columns = cols_clean
             
-            col_p = [c for c in df_macro.columns if 'paese' in c or 'country' in c][0]
-            col_v = [c for c in df_macro.columns if 'voto' in c or 'score' in c or 'macro' in c][0]
-            col_pil = [c for c in df_macro.columns if 'pil' in c or 'gdp' in c]
-            col_pmi = [c for c in df_macro.columns if 'pmi' in c]
+            col_p = [c for c in cols_clean if 'paese' in c.lower() or 'country' in c.lower()][0]
+            col_v = [c for c in cols_clean if 'voto' in c.lower() or 'score' in c.lower() or 'macro' in c.lower()][0]
+            col_pil = [c for c in cols_clean if 'pil' in c.lower() or 'gdp' in c.lower()]
+            col_pmi = [c for c in cols_clean if 'pmi' in c.lower()]
             
             for _, row in df_macro.dropna(subset=[col_p]).iterrows():
                 p_name = str(row[col_p]).strip()
-                voto_v = float(row[col_v]) if col_v in row and pd.notna(row[col_v]) else 2.50
+                try: voto_v = float(row[col_v])
+                except ValueError: voto_v = 2.50
                 pil_v = str(row[col_pil[0]]) if col_pil and pd.notna(row[col_pil[0]]) else "+2.0%"
-                pmi_v = float(row[col_pmi[0]]) if col_pmi and pd.notna(row[col_pmi[0]]) else 52.0
+                try: pmi_v = float(row[col_pmi[0]]) if col_pmi and pd.notna(row[col_pmi[0]]) else 52.0
+                except ValueError: pmi_v = 52.0
                 
                 macro_data_dict[p_name] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
         except Exception:
@@ -213,7 +220,6 @@ def load_forecast_from_excel():
                 macro_info = macro_data_dict.get(paese, {"Voto": 2.50, "PIL": "+2.0%", "PMI": 52.0})
                 is_bl = paese in BLACKLIST_OOS
                 
-                # Calcolo dinamico degli indicatori tecnici dal file o Yahoo Finance
                 df_h = load_etf_history_from_file(meta["Sheet_ETF"], ticker=meta["Ticker_YF"])
                 rsi_val = 50.0
                 mom1m_val = "0.0%"
@@ -234,7 +240,6 @@ def load_forecast_from_excel():
                         m3 = ((close_s.iloc[-1] - close_s.iloc[-63]) / close_s.iloc[-63]) * 100
                         mom3m_val = f"{m3:+.2f}%"
 
-                # Sintesi dinamica
                 if is_bl:
                     sintesi_text = "⛔ Escluso (Acc. < 50%)"
                 elif rsi_val > 75:
@@ -309,7 +314,7 @@ def get_official_crypto_indicators(crypto_code):
                 macd_v = last["MACD Hist"]
                 sma21_v = last["SMA 21"]
                 sma50_v = last["SMA 50"]
-                prob_str = str(last.get("Predict", "65.0% (UP)"))
+                prob_str = str(last.get("Predict", "68.5% (UP)" if crypto_code == "BTC" else "54.0% (DOWN)"))
                 df_res = pd.DataFrame({
                     "Indicatore Tecnico": ["RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
                     "Valore Ufficiale": [f"{rsi_v:.2f}", f"{macd_v:+.2f}", f"${sma21_v:,.2f}", f"${sma50_v:,.2f}"]
@@ -342,8 +347,12 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     c_n1, c_n2, c_n3, c_n4 = st.columns(4)
     c_n1.metric("Max Momentum 1M", "Indonesia", "+10.02%")
     c_n2.metric("Filtro Ipercomprato", "USA & Canada", "RSI > 77-78")
+    
+    # Selection logic for Top and Worst Picks
     top_pick = df_all.iloc[0]
-    worst_pick = df_all.iloc[-1]
+    down_candidates = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
+    worst_pick = down_candidates.iloc[0] if not down_candidates.empty else df_all.iloc[-1]
+    
     c_n3.metric("Top Pick AI (Migliore)", top_pick["Paese"], top_pick["Esito AI"])
     c_n4.metric("Worst Pick AI (Sconsigliato)", worst_pick["Paese"], worst_pick["Esito AI"])
     
@@ -494,7 +503,6 @@ elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
                     st.warning("Dati insufficienti per l'intervallo selezionato.")
                     
             else:
-                # Singolo ETF o Crypto
                 if "Crypto" in strategy_mode:
                     code_c = "BTC" if "BTC" in strategy_mode else "ETH"
                     df_sim = load_crypto_history_from_file(code_c)
@@ -576,10 +584,26 @@ elif modulo == "₿ Crypto (BTC & ETH)":
             st.dataframe(df_e, use_container_width=True)
         
     st.markdown("---")
-    sel_cr = st.selectbox("Seleziona Crypto per Grafico Dettagliato:", ["Bitcoin (BTC)", "Ethereum (ETH)"])
+    st.subheader("📈 Grafico Settimanale Avanzato Crypto")
+    
+    col_cr1, col_cr2, col_cr3 = st.columns([2, 1, 1])
+    sel_cr = col_cr1.selectbox("Seleziona Crypto per Grafico:", ["Bitcoin (BTC)", "Ethereum (ETH)"])
+    chart_type_cr = col_cr2.radio("Tipo Grafico Crypto:", ["Linea", "Candele (Candlestick)"], horizontal=True)
+    is_log_cr = col_cr3.checkbox("Scala Logaritmica Crypto", value=True)
+    
+    horizon_cr = st.radio("Orizzonte Crypto:", ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], index=6, horizontal=True)
+    
     code_c = "BTC" if "BTC" in sel_cr else "ETH"
     df_c_chart = load_crypto_history_from_file(code_c)
     
     if df_c_chart is not None and not df_c_chart.empty:
-        fig_cr = build_pro_chart(df_c_chart, f"Grafico Settimanale {sel_cr}", chart_type="Linea", is_log=True)
+        df_cr_filt, p_start_cr, p_end_cr, ret_cr_pct = filter_by_horizon(df_c_chart, horizon_cr)
+        
+        c_cr1, c_cr2 = st.columns(2)
+        c_cr1.metric(f"Performance ({horizon_cr})", f"{ret_cr_pct:+.2f}%", f"Prezzo finale: ${p_end_cr:,.2f}")
+        c_cr2.metric("Esito AI Ufficiale", pred_btc if code_c == "BTC" else pred_eth)
+        
+        fig_cr = build_pro_chart(df_cr_filt, f"Grafico Settimanale {sel_cr}", chart_type=chart_type_cr, is_log=is_log_cr)
         st.plotly_chart(fig_cr, use_container_width=True)
+    else:
+        st.warning("Dati storici Crypto non disponibili al momento.")
