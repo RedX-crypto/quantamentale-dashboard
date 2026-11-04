@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 import os
 
 # Import yfinance come fallback e fonte principale pulita
@@ -201,7 +200,7 @@ r_data_18 = [
 df_all = pd.DataFrame(r_data_18)
 
 # -----------------------------------------------------------------------------
-# MODULO 1 & 2 (Invariati)
+# MODULI 1 & 2
 # -----------------------------------------------------------------------------
 if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     st.subheader("🏆 Rotazione ETF & Tripla Confluenza Quantamentale")
@@ -219,7 +218,7 @@ elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
     all_assets = df_all["Paese"].tolist() + ["Bitcoin (BTC)", "Ethereum (ETH)"]
     
     col_s1, col_s2, col_s3 = st.columns([2, 1, 1])
-    sel_asset = col_s1.selectbox("Seleziona Asset:", all_assets, index=2) # Germania di default
+    sel_asset = col_s1.selectbox("Seleziona Asset:", all_assets, index=2)
     init_cap = col_s2.number_input("Capitale Iniziale (€)", min_value=100.0, value=1000.0, step=100.0)
     
     col_d1, col_d2 = st.columns(2)
@@ -252,11 +251,8 @@ elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
                         df_res = df_sim.resample(rule).agg({'Close': 'last', 'Open': 'first'}).dropna()
                         
                         df_res['Period_Return'] = df_res['Close'].pct_change().fillna(0)
-                        
-                        # Generazione Segnale AI basato sul periodo precedente
                         df_res['Signal'] = np.where(df_res['Period_Return'].shift(1).fillna(0) >= 0, 'UP', 'DOWN')
                         
-                        # Simulazione transazioni passo-passo con reinvestimento e tasse 26% sul surplus
                         capital = init_cap
                         cap_history = []
                         tx_log = []
@@ -275,7 +271,6 @@ elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
                                 else:
                                     tax = 0.0
                                     net_profit = gross_profit
-                                
                                 capital += net_profit
                             else:
                                 alloc = 0.0
@@ -296,7 +291,6 @@ elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
                             
                         df_res['Portfolio_Value'] = cap_history
                         
-                        # Metriche KPI
                         final_val = cap_history[-1]
                         total_profit = final_val - init_cap
                         tot_ret = (total_profit / init_cap) * 100.0
@@ -308,7 +302,6 @@ elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
                         
                         st.markdown("---")
                         
-                        # Grafico evoluzione
                         df_plot = pd.DataFrame({'Date': df_res.index, 'Close': df_res['Portfolio_Value']})
                         fig_t = build_pro_chart(df_plot, f"Evoluzione Portafoglio Strategia AI — {sel_asset}")
                         st.plotly_chart(fig_t, use_container_width=True)
