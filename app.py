@@ -180,28 +180,42 @@ def load_forecast_from_excel():
     db_file = find_excel_file("DataBase.xlsx")
     records = []
     
-    # 1. Caricamento dinamico dei Dati Macro dal foglio 'Macro Paesi 3M'
+    # 1. Caricamento dinamico e robusto dei Dati Macro dal foglio 'Macro Paesi 3M'
     macro_data_dict = {}
     if db_file:
         try:
-            df_macro = pd.read_excel(db_file, sheet_name="Macro Paesi 3M")
-            cols_clean = [str(c).strip() for c in df_macro.columns]
-            df_macro.columns = cols_clean
-            
-            col_p = [c for c in cols_clean if 'paese' in c.lower() or 'country' in c.lower()][0]
-            col_v = [c for c in cols_clean if 'voto' in c.lower() or 'score' in c.lower() or 'macro' in c.lower()][0]
-            col_pil = [c for c in cols_clean if 'pil' in c.lower() or 'gdp' in c.lower()]
-            col_pmi = [c for c in cols_clean if 'pmi' in c.lower()]
-            
-            for _, row in df_macro.dropna(subset=[col_p]).iterrows():
-                p_name = str(row[col_p]).strip()
-                try: voto_v = float(row[col_v])
-                except ValueError: voto_v = 2.50
-                pil_v = str(row[col_pil[0]]) if col_pil and pd.notna(row[col_pil[0]]) else "+2.0%"
-                try: pmi_v = float(row[col_pmi[0]]) if col_pmi and pd.notna(row[col_pmi[0]]) else 52.0
-                except ValueError: pmi_v = 52.0
+            xls_db = pd.ExcelFile(db_file)
+            sheet_macro_name = [s for s in xls_db.sheet_names if 'macro' in s.lower() or 'paesi' in s.lower()]
+            if sheet_macro_name:
+                df_macro = pd.read_excel(xls_db, sheet_name=sheet_macro_name[0])
                 
-                macro_data_dict[p_name] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
+                cols = list(df_macro.columns)
+                col_p_idx = next((i for i, c in enumerate(cols) if any(k in str(c).lower() for k in ['paese', 'country', 'nazione', 'etf', 'asset'])), 0)
+                col_v_idx = next((i for i, c in enumerate(cols) if any(k in str(c).lower() for k in ['voto', 'score', 'macro', 'rating'])), 1)
+                col_pil_idx = next((i for i, c in enumerate(cols) if any(k in str(c).lower() for k in ['pil', 'gdp'])), None)
+                col_pmi_idx = next((i for i, c in enumerate(cols) if any(k in str(c).lower() for k in ['pmi'])), None)
+                
+                for _, row in df_macro.iterrows():
+                    p_val = row.iloc[col_p_idx]
+                    if pd.isna(p_val):
+                        continue
+                    p_name_clean = str(p_val).strip().lower()
+                    
+                    v_raw = row.iloc[col_v_idx]
+                    try:
+                        voto_v = float(v_raw) if pd.notna(v_raw) else 2.50
+                    except (ValueError, TypeError):
+                        voto_v = 2.50
+                        
+                    pil_v = str(row.iloc[col_pil_idx]).strip() if col_pil_idx is not None and pd.notna(row.iloc[col_pil_idx]) else "+2.0%"
+                    
+                    pmi_raw = row.iloc[col_pmi_idx] if col_pmi_idx is not None else None
+                    try:
+                        pmi_v = float(pmi_raw) if pd.notna(pmi_raw) else 52.0
+                    except (ValueError, TypeError):
+                        pmi_v = 52.0
+                        
+                    macro_data_dict[p_name_clean] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
         except Exception:
             pass
 
@@ -209,17 +223,32 @@ def load_forecast_from_excel():
     if db_file:
         try:
             df_fc = pd.read_excel(db_file, sheet_name="Forecast")
-            for _, row in df_fc.dropna(subset=['Country', 'Forecast']).iterrows():
-                paese = str(row['Country']).strip()
-                fc_str = str(row['Forecast']).strip()
+            cols_fc = [str(c).strip().lower() for c in df_fc.columns]
+            col_country_fc = [df_fc.columns[i] for i, c in enumerate(cols_fc) if 'country' in c or 'paese' in c][0]
+            col_forecast_fc = [df_fc.columns[i] for i, c in enumerate(cols_fc) if 'forecast' in c or 'previsione' in c][0]
+            
+            for _, row in df_fc.dropna(subset=[col_country_fc, col_forecast_fc]).iterrows():
+                paese = str(row[col_country_fc]).strip()
+                fc_str = str(row[col_forecast_fc]).strip()
                 match = re.search(r'([\d\.]+)', fc_str)
                 prob = float(match.group(1)) if match else 50.0
                 segnal = "DOWN" if "DOWN" in fc_str.upper() else "UP"
                 
                 meta = meta_etfs.get(paese, {"Ticker_YF": "SPY", "Sheet_ETF": paese})
-                macro_info = macro_data_dict.get(paese, {"Voto": 2.50, "PIL": "+2.0%", "PMI": 52.0})
+                
+                # Match flessibile del Paese nel dizionario macro
+                macro_info = macro_data_dict.get(paese.lower(), None)
+                if macro_info is None:
+                    for k_macro, v_macro in macro_data_dict.items():
+                        if k_macro in paese.lower() or paese.lower() in k_macro:
+                            macro_info = v_macro
+                            break
+                if macro_info is None:
+                    macro_info = {"Voto": 2.50, "PIL": "+2.0%", "PMI": 52.0}
+                    
                 is_bl = paese in BLACKLIST_OOS
                 
+                # Calcolo dinamico RSI e Momentum
                 df_h = load_etf_history_from_file(meta["Sheet_ETF"], ticker=meta["Ticker_YF"])
                 rsi_val = 50.0
                 mom1m_val = "0.0%"
@@ -230,7 +259,7 @@ def load_forecast_from_excel():
                     delta = close_s.diff()
                     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                    rs = gain / loss
+                    rs = gain / (loss + 1e-9)
                     rsi_val = round(float((100 - (100 / (1 + rs))).iloc[-1]), 1)
                     
                     if len(df_h) >= 21:
@@ -240,6 +269,7 @@ def load_forecast_from_excel():
                         m3 = ((close_s.iloc[-1] - close_s.iloc[-63]) / close_s.iloc[-63]) * 100
                         mom3m_val = f"{m3:+.2f}%"
 
+                # Sintesi dinamica basata sul Voto Macro e RSI
                 if is_bl:
                     sintesi_text = "⛔ Escluso (Acc. < 50%)"
                 elif rsi_val > 75:
@@ -248,6 +278,8 @@ def load_forecast_from_excel():
                     sintesi_text = "Massima Confluenza"
                 elif macro_info["Voto"] >= 2.5:
                     sintesi_text = "Forte Confluenza"
+                elif macro_info["Voto"] < 0:
+                    sintesi_text = "Debole / Sconsigliato"
                 else:
                     sintesi_text = "Supportato"
                 
