@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 import os
 
 # Import yfinance come fallback e fonte principale pulita
@@ -22,7 +23,7 @@ modulo = st.sidebar.selectbox(
     [
         "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)", 
         "🔄 Correlazione ETF", 
-        "⏳ Simulatore di Backtest Personalizzato", 
+        "⏳ Simulatore di Backtest & Risk Analytics", 
         "₿ Crypto (BTC & ETH)"
     ]
 )
@@ -108,7 +109,7 @@ def filter_by_horizon(df, horizon):
     
     return df_filtered, p_start, p_end, ret_pct
 
-# Caricamento storico ETF pulito direttamente tramite yfinance (continuo e senza buchi)
+# Caricamento storico ETF pulito direttamente tramite yfinance
 @st.cache_data
 def load_etf_history_from_file(sheet_name, ticker="SPY"):
     if yf is not None:
@@ -125,7 +126,6 @@ def load_etf_history_from_file(sheet_name, ticker="SPY"):
         except Exception:
             pass
             
-    # Fallback su file Excel se yfinance non risponde
     etf_file = find_excel_file("Hystorical_Data_ETF.xlsx")
     if etf_file:
         try:
@@ -439,11 +439,11 @@ elif modulo == "🔄 Correlazione ETF":
                 st.error(f"Errore nel calcolo della correlazione: {e}")
 
 # -----------------------------------------------------------------------------
-# MODULO 3: SIMULATORE DI PORTAFOGLIO MULTI-ASSET (ETF + BTC + ETH)
+# MODULO 3: SIMULATORE DI PORTAFOGLIO MULTI-ASSET & RISK ANALYTICS
 # -----------------------------------------------------------------------------
-elif modulo == "⏳ Simulatore di Backtest Personalizzato":
-    st.subheader("🧪 Simulatore di Portafoglio Multi-Asset Personalizzato")
-    st.write("Seleziona più asset (ETF, Bitcoin ed Ethereum), imposta il capitale in euro per ciascuno e scegli l'intervallo temporale.")
+elif modulo == "⏳ Simulatore di Backtest & Risk Analytics":
+    st.subheader("🧪 Simulatore di Portafoglio Multi-Asset & Risk Management")
+    st.write("Seleziona più asset, assegna il capitale in euro e analizza le performance con metriche di rischio avanzate (Max Drawdown, Sharpe Ratio).")
     
     all_etfs = df_all["Paese"].tolist()
     all_assets_options = all_etfs + ["Bitcoin (BTC)", "Ethereum (ETH)"]
@@ -472,11 +472,11 @@ elif modulo == "⏳ Simulatore di Backtest Personalizzato":
         d_start = col_d1.date_input("Data Inizio Simulazione", pd.to_datetime("2025-01-01"))
         d_end = col_d2.date_input("Data Fine Simulazione", pd.to_datetime("2026-11-01"))
         
-        if st.button("🚀 Esegui Simulazione Portafoglio"):
+        if st.button("🚀 Esegui Simulazione & Risk Analytics"):
             if total_capital <= 0:
                 st.error("Il capitale totale deve essere maggiore di 0.")
             else:
-                with st.spinner("Calcolo backtest portafoglio multi-asset in corso..."):
+                with st.spinner("Calcolo backtest e metriche di rischio in corso..."):
                     try:
                         price_dfs = {}
                         dt_start = pd.to_datetime(d_start)
@@ -509,20 +509,44 @@ elif modulo == "⏳ Simulatore di Backtest Personalizzato":
                                 
                                 df_port = pd.DataFrame({'Date': portfolio_series.index, 'Close': portfolio_series.values})
                                 
+                                # Calcolo Metriche di Rischio e Performance
                                 val_final = portfolio_series.iloc[-1]
                                 ret_gross = (val_final - total_capital) / total_capital
                                 profit_gross = val_final - total_capital
                                 delta_str = f"{ret_gross*100:+.2f}%"
                                 
-                                c1, c2, c3 = st.columns(3)
-                                c1.metric("Capitale Iniziale", f"{total_capital:,.2f} €")
-                                c2.metric("Valore Finale Portafoglio", f"{val_final:,.2f} €", delta=delta_str)
-                                c3.metric("Profitto / Perdita Lorda", f"{profit_gross:+,.2f} €", delta=delta_str, delta_color="normal")
+                                # Calcolo Maximum Drawdown (Max DD)
+                                rolling_max = portfolio_series.cummax()
+                                drawdown = (portfolio_series - rolling_max) / rolling_max
+                                max_dd = drawdown.min() * 100.0
                                 
-                                st.caption("💡 *Nota: Il rendimento calcolato è la combinazione ponderata dei capitali assegnati a ciascun asset.*")
+                                # Calcolo Sharpe Ratio approssimato (assumendo risk-free 0 e rendimenti giornalieri/settimanali)
+                                portfolio_returns = portfolio_series.pct_change().dropna()
+                                sharpe_ratio = (portfolio_returns.mean() / portfolio_returns.std()) * np.sqrt(52) if portfolio_returns.std() > 0 else 0.0
                                 
-                                fig_port = build_pro_chart(df_port, "Evoluzione Storica del Portafoglio Multi-Asset", chart_type="Linea", is_log=True)
-                                st.plotly_chart(fig_port, use_container_width=True)
+                                # Visualizzazione metriche in 4 colonne
+                                c1, c2, c3, c4 = st.columns(4)
+                                c1.metric("Valore Finale Portafoglio", f"{val_final:,.2f} €", delta=delta_str)
+                                c2.metric("Profitto / Perdita Lorda", f"{profit_gross:+,.2f} €", delta=delta_str, delta_color="normal")
+                                c3.metric("Maximum Drawdown (Max DD)", f"{max_dd:.2f}%", delta_color="inverse")
+                                c4.metric("Sharpe Ratio (Stima)", f"{sharpe_ratio:.2f}")
+                                
+                                st.markdown("---")
+                                
+                                # Layout a due colonne: Grafico Evoluzione + Grafico a Torta Allocazione
+                                col_g1, col_g2 = st.columns([2, 1])
+                                
+                                with col_g1:
+                                    fig_port = build_pro_chart(df_port, "Evoluzione Storica del Portafoglio Multi-Asset", chart_type="Linea", is_log=True)
+                                    st.plotly_chart(fig_port, use_container_width=True)
+                                    
+                                with col_g2:
+                                    st.markdown("#### 🥧 Pesi di Allocazione")
+                                    df_pie = pd.DataFrame(list(asset_allocations.items()), columns=["Asset", "Capitale"])
+                                    fig_pie = px.pie(df_pie, names="Asset", values="Capitale", hole=0.4, template="plotly_white")
+                                    fig_pie.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=400)
+                                    st.plotly_chart(fig_pie, use_container_width=True)
+                                    
                             else:
                                 st.warning("Intervallo di date troppo ristretto o dati insufficienti per sincronizzare gli asset selezionati.")
                         else:
