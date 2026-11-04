@@ -377,8 +377,8 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     c_n1, c_n2, c_n3, c_n4 = st.columns(4)
     c_n1.metric("Max Momentum 1M", "Indonesia", "+10.02%")
     
-    # Filtro Ipercomprato: delta_color="inverse" per renderlo ROSSO quando sale
-    c_n2.metric("Filtro Ipercomprato", "USA & Canada", "RSI > 77-78", delta="RSI Alto", delta_color="inverse")
+    # Filtro Ipercomprato: delta numerico "+5.0" con inverse (rosso se sale)
+    c_n2.metric("Filtro Ipercomprato", "USA & Canada", "+5.0", delta_color="inverse")
     
     top_pick = df_all.iloc[0]
     down_candidates = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
@@ -386,8 +386,8 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
     
     c_n3.metric("Top Pick AI (Migliore)", top_pick["Paese"], top_pick["Esito AI"])
     
-    # Worst Pick AI: delta_color="inverse" per renderlo ROSSO (indicando ribasso/sconsigliato)
-    c_n4.metric("Worst Pick AI (Sconsigliato)", worst_pick["Paese"], worst_pick["Esito AI"], delta="- Rischio Down", delta_color="inverse")
+    # Worst Pick AI: delta numerico "-5.0" con inverse (rosso se ribassista)
+    c_n4.metric("Worst Pick AI (Sconsigliato)", worst_pick["Paese"], worst_pick["Esito AI"], delta="-5.0", delta_color="inverse")
     
     st.markdown("---")
     st.subheader("📈 Grafico Storico Avanzato ETF Paese")
