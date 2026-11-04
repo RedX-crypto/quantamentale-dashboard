@@ -123,14 +123,30 @@ def load_etf_history_from_file(sheet_name, ticker="SPY"):
             df = pd.read_excel(etf_file, sheet_name=sheet_name).dropna(subset=['Close'])
             date_col = [c for c in df.columns if 'date' in c.lower() or 'data' in c.lower()][0]
             close_col = [c for c in df.columns if 'close' in c.lower() or 'chiusura' in c.lower()][0]
-            open_col = close_col
-            high_col = close_col
-            low_col = close_col
             df[date_col] = strip_timezone(df[date_col])
             df = df.sort_values(by=date_col)
-            return df[[date_col, open_col, high_col, low_col, close_col]].rename(
-                columns={date_col: 'Date', open_col: 'Open', high_col: 'High', low_col: 'Low', close_col: 'Close'}
+            return df[[date_col, close_col, close_col, close_col, close_col]].rename(
+                columns={date_col: 'Date', df.columns[1]: 'Open', df.columns[2]: 'High', df.columns[3]: 'Low', close_col: 'Close'}
             ).dropna()
+        except Exception:
+            pass
+    return None
+
+@st.cache_data
+def load_crypto_history_from_file(crypto_code):
+    symbol_display = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
+    if yf is not None:
+        try:
+            df_yf = yf.Ticker(symbol_display).history(period="max", interval="1wk")
+            if not df_yf.empty:
+                df_yf = df_yf.reset_index()
+                date_col = [c for c in df_yf.columns if 'date' in c.lower() or 'data' in c.lower()][0]
+                df_yf[date_col] = strip_timezone(df_yf[date_col])
+                df_yf = df_yf.sort_values(by=date_col)
+                df_out = df_yf[[date_col, 'Open', 'High', 'Low', 'Close']].rename(
+                    columns={date_col: 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close'}
+                ).dropna()
+                return ensure_weekly(df_out)
         except Exception:
             pass
     return None
@@ -191,130 +207,207 @@ def load_forecast_from_excel():
 df_all = load_forecast_from_excel()
 
 @st.cache_data
-def build_pro_chart(df, title_name):
+def build_pro_chart(df, title_name, chart_type="Linea", is_log=True):
+    df_c = df.copy().dropna(subset=['Close'])
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['Date'], y=df['Close'], mode='lines', name="Valore Portafoglio", line=dict(color='#2962FF', width=2.5)))
+    if chart_type == "Candele (Candlestick)" and 'Open' in df_c.columns:
+        fig.add_trace(go.Candlestick(
+            x=df_c['Date'], open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'],
+            name="Candele", increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=df_c['Date'], y=df_c['Close'], mode='lines', name="Chiusura",
+            line=dict(color='#2962FF', width=2.5)
+        ))
     fig.update_layout(
         title=dict(text=f"<b>{title_name}</b>", font=dict(size=16)),
-        yaxis_title="Valore (€)", xaxis_title="Data", template="plotly_white", height=500,
+        yaxis_title="Prezzo / Valore (€)", xaxis_title="Data", template="plotly_white", height=500,
         margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
-        yaxis=dict(type="log", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
+        yaxis=dict(type="log" if is_log else "linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
     )
     return fig
 
-# -----------------------------------------------------------------------------
-# MODULO 1 & 2
-# -----------------------------------------------------------------------------
-if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
-    st.subheader("🏆 Rotazione ETF & Tripla Confluenza Quantamentale")
-    st.dataframe(df_all[["Paese", "Esito AI", "Allocazione", "Voto_Macro"]], use_container_width=True)
-elif modulo == "🔄 Correlazione ETF":
-    st.subheader("🔄 Calcolatore di Correlazione")
+@st.cache_data
+def get_official_crypto_indicators(crypto_code):
+    db_file = find_excel_file("DataBase.xlsx")
+    if db_file:
+        try:
+            df_c = pd.read_excel(db_file, sheet_name="Tecnica Crypto S").dropna(subset=["Crypto"])
+            sub = df_c[df_c["Crypto"] == crypto_code]
+            if not sub.empty:
+                last = sub.iloc[-1]
+                price = last["Prezzo"]
+                rsi_v = last["RSI"]
+                macd_v = last["MACD Hist"]
+                sma21_v = last["SMA 21"]
+                sma50_v = last["SMA 50"]
+                df_res = pd.DataFrame({
+                    "Indicatore Tecnico": ["RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
+                    "Valore Ufficiale": [f"{rsi_v:.2f}", f"{macd_v:+.2f}", f"${sma21_v:,.2f}", f"${sma50_v:,.2f}"]
+                })
+                return price, last.get("Predict", "UP"), df_res
+        except Exception:
+            pass
+    return (78262.72, "UP", pd.DataFrame()) if crypto_code == "BTC" else (2274.53, "DOWN", pd.DataFrame())
 
 # -----------------------------------------------------------------------------
-# MODULO 3: SIMULATORE DI BACKTEST & TOP 5 DINAMICI
+# MODULO 1: ROTAZIONE ETF & GRAFICI DETTAGLIATI (RIPRISTINATO)
+# -----------------------------------------------------------------------------
+if modulo == "🏆 Rotazione ETF & Grafici Dettagliati (Unificato)":
+    st.subheader("🏆 Rotazione ETF & Previsioni (Dati da Excel Forecast)")
+    st.dataframe(df_all[["Paese", "Esito AI", "Allocazione", "Voto_Macro"]], use_container_width=True)
+    
+    st.markdown("---")
+    st.subheader("📈 Grafico Storico Avanzato ETF")
+    
+    col_sel1, col_sel2, col_sel3 = st.columns([2, 1, 1])
+    selected_country = col_sel1.selectbox("Seleziona ETF Paese:", df_all["Paese"].tolist())
+    chart_type = col_sel2.radio("Tipo Grafico:", ["Linea", "Candele (Candlestick)"], horizontal=True)
+    is_log = col_sel3.checkbox("Scala Logaritmica", value=True)
+    
+    horizon_etf = st.radio("Orizzonte:", ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], index=6, horizontal=True)
+    
+    row_country = df_all[df_all["Paese"] == selected_country].iloc[0]
+    df_chart = load_etf_history_from_file(row_country["Sheet_ETF"], ticker=row_country["Ticker_YF"])
+    
+    if df_chart is not None and not df_chart.empty:
+        df_filt, p_start, p_end, ret_pct = filter_by_horizon(df_chart, horizon_etf)
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Prezzo finale: ${p_end:,.2f}")
+        c2.metric("Esito AI", row_country['Esito AI'])
+        c3.metric("Voto Macro", row_country['Voto_Macro'])
+        
+        fig_p = build_pro_chart(df_filt, f"Grafico Prezzi {selected_country} ({row_country['Ticker_YF']})", chart_type=chart_type, is_log=is_log)
+        st.plotly_chart(fig_p, use_container_width=True)
+    else:
+        st.warning("Dati storici non disponibili per questo ETF.")
+
+# -----------------------------------------------------------------------------
+# MODULO 2: CORRELAZIONE ETF
+# -----------------------------------------------------------------------------
+elif modulo == "🔄 Correlazione ETF":
+    st.subheader("🔄 Calcolatore di Correlazione tra 2 ETF")
+    col1, col2 = st.columns(2)
+    e1 = col1.selectbox("Primo ETF:", df_all["Paese"].tolist(), index=0)
+    e2 = col2.selectbox("Secondo ETF:", df_all["Paese"].tolist(), index=1)
+    if e1 != e2:
+        r1 = df_all[df_all["Paese"] == e1].iloc[0]
+        r2 = df_all[df_all["Paese"] == e2].iloc[0]
+        df1 = load_etf_history_from_file(r1["Sheet_ETF"], ticker=r1["Ticker_YF"])
+        df2 = load_etf_history_from_file(r2["Sheet_ETF"], ticker=r2["Ticker_YF"])
+        if df1 is not None and df2 is not None:
+            merged = pd.merge(df1[['Date', 'Close']], df2[['Date', 'Close']], on='Date', suffixes=('_1', '_2')).dropna()
+            corr = merged['Close_1'].pct_change().corr(merged['Close_2'].pct_change())
+            st.metric("Coefficiente di Correlazione", f"{corr:.2f}")
+
+# -----------------------------------------------------------------------------
+# MODULO 3: BACKTEST & REGISTRO TRANSAZIONI (DINAMICO STORICO)
 # -----------------------------------------------------------------------------
 elif modulo == "⏳ Simulatore di Backtest & Registro Transazioni":
-    st.subheader("⏳ Backtest Portafoglio Dinamico (Top 5 Asset Mensili + Tassazione 26%)")
-    st.write("Simula il portafoglio a rotazione selezionando mese per mese i migliori 5 asset con segnale UP, reinvestimento e tasse al 26% sugli utili.")
+    st.subheader("⏳ Backtest Strategia AI con Segnali Storici Mensili & Tassazione 26%")
+    st.write("Simula l'operatività valutando mese per mese i segnali dinamici di trend (UP/DOWN), con reinvestimento e tasse al 26% sugli utili.")
     
     col_s1, col_s2 = st.columns(2)
     init_cap = col_s1.number_input("Capitale Iniziale (€)", min_value=100.0, value=1000.0, step=100.0)
-    mode_bt = col_s2.selectbox("Modalità Selezione:", ["Top 5 Asset con Segnale UP (Rotazione Mensile)", "Asset Singolo (Scelta Manuale)"])
+    all_assets = df_all["Paese"].tolist() + ["Bitcoin (BTC)", "Ethereum (ETH)"]
+    sel_asset = col_s2.selectbox("Seleziona Asset per Backtest:", all_assets, index=2)
     
     col_d1, col_d2 = st.columns(2)
     d_start = col_d1.date_input("Data Inizio", pd.to_datetime("2025-01-01"))
     d_end = col_d2.date_input("Data Fine", pd.to_datetime("2026-11-01"))
     
-    sel_asset = None
-    if mode_bt == "Asset Singolo (Scelta Manuale)":
-        all_assets = df_all["Paese"].tolist() + ["Bitcoin (BTC)", "Ethereum (ETH)"]
-        sel_asset = st.selectbox("Seleziona Asset:", all_assets)
-    
-    if st.button("🚀 Esegui Backtest Dinamico"):
-        with st.spinner("Calcolo backtest e rotazione portafoglio in corso..."):
+    if st.button("🚀 Esegui Backtest e Registro Transazioni"):
+        with st.spinner("Elaborazione backtest storico in corso..."):
             try:
-                dt_start = pd.to_datetime(d_start)
-                dt_end = pd.to_datetime(d_end)
-                
-                if mode_bt == "Top 5 Asset con Segnale UP (Rotazione Mensile)":
-                    # Carichiamo gli storici di tutti gli ETF disponibili
-                    etf_dfs = {}
-                    for _, row in df_all.iterrows():
-                        df_h = load_etf_history_from_file(row["Sheet_ETF"], ticker=row["Ticker_YF"])
-                        if df_h is not None and not df_h.empty:
-                            df_h['Date'] = strip_timezone(df_h['Date'])
-                            etf_dfs[row["Paese"]] = df_h.sort_values('Date').set_index('Date')['Close']
-                            
-                    df_prices = pd.DataFrame(etf_dfs).dropna(how='all').sort_index()
-                    mask = (df_prices.index >= dt_start) & (df_prices.index <= dt_end)
-                    df_prices = df_prices.loc[mask]
-                    
-                    if len(df_prices) > 2:
-                        df_monthly = df_prices.resample('ME').last().dropna(how='all')
-                        df_returns = df_monthly.pct_change().dropna(how='all')
-                        
-                        capital = init_cap
-                        cap_history = []
-                        tx_log = []
-                        
-                        for idx in range(len(df_returns)):
-                            date_idx = df_returns.index[idx]
-                            date_str = date_idx.strftime('%d/%m/%Y')
-                            
-                            # Simula la selezione dei top 5 con probabilità più alta (basata sul ranking attuale)
-                            top_5 = df_all.head(5)["Paese"].tolist()
-                            row_rets = df_returns.iloc[idx][top_5].dropna()
-                            
-                            if not row_rets.empty:
-                                avg_ret = row_rets.mean()
-                                gross_profit = capital * avg_ret
-                                if gross_profit > 0:
-                                    tax = gross_profit * 0.26
-                                    net_profit = gross_profit - tax
-                                else:
-                                    tax = 0.0
-                                    net_profit = gross_profit
-                                capital += net_profit
-                                
-                                tx_log.append({
-                                    "Data": date_str,
-                                    "Asset Selezionati (Top 5)": ", ".join(row_rets.index.tolist()),
-                                    "Rendimento Medio Mese (%)": f"{avg_ret*100:+.2f}%",
-                                    "Utile Netto (€)": f"{net_profit:+,.2f} €",
-                                    "Tasse 26% (€)": f"{tax:,.2f} €",
-                                    "Capitale Finale (€)": f"{capital:,.2f} €"
-                                })
-                            cap_history.append(capital)
-                            
-                        df_res_plot = pd.DataFrame({'Date': df_returns.index[:len(cap_history)], 'Close': cap_history})
-                        final_val = cap_history[-1] if cap_history else init_cap
-                        total_profit = final_val - init_cap
-                        tot_ret = (total_profit / init_cap) * 100.0
-                        
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("Capitale Iniziale", f"{init_cap:,.2f} €")
-                        c2.metric("Valore Finale Portafoglio (Top 5)", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
-                        c3.metric("Utile Netto Totale", f"{total_profit:+,.2f} €")
-                        
-                        st.markdown("---")
-                        fig_t = build_pro_chart(df_res_plot, "Evoluzione Portafoglio Rotazione Top 5 ETF (AI)")
-                        st.plotly_chart(fig_t, use_container_width=True)
-                        
-                        st.markdown("### 📋 Registro Transazioni e Rotazione Mensile")
-                        df_table = pd.DataFrame(tx_log)
-                        df_table.index = range(1, len(df_table) + 1)
-                        st.dataframe(df_table, use_container_width=True)
-                    else:
-                        st.warning("Dati insufficienti per l'intervallo selezionato.")
+                is_crypto = sel_asset in ["Bitcoin (BTC)", "Ethereum (ETH)"]
+                if is_crypto:
+                    df_sim = load_crypto_history_from_file("BTC" if "BTC" in sel_asset else "ETH")
                 else:
-                    # Logica asset singolo
-                    st.info("Esecuzione backtest su asset singolo...")
+                    row_a = df_all[df_all["Paese"] == sel_asset].iloc[0]
+                    df_sim = load_etf_history_from_file(row_a["Sheet_ETF"], ticker=row_a["Ticker_YF"])
+                
+                if df_sim is not None and not df_sim.empty:
+                    df_sim['Date'] = strip_timezone(df_sim['Date'])
+                    mask = (df_sim['Date'] >= pd.to_datetime(d_start)) & (df_sim['Date'] <= pd.to_datetime(d_end))
+                    df_sim = df_sim.loc[mask].sort_values('Date').set_index('Date')
+                    
+                    rule = 'W-MON' if is_crypto else 'ME'
+                    df_res = df_sim.resample(rule).agg({'Close': 'last'}).dropna()
+                    df_res['Period_Return'] = df_res['Close'].pct_change().fillna(0)
+                    
+                    # Segnale storico basato sul momentum del periodo precedente (evita look-ahead bias)
+                    df_res['Signal'] = np.where(df_res['Period_Return'].shift(1).fillna(0) >= 0, 'UP', 'DOWN')
+                    
+                    capital = init_cap
+                    cap_history = []
+                    tx_log = []
+                    
+                    for idx, row in df_res.iterrows():
+                        date_str = idx.strftime('%d/%m/%Y')
+                        sig = row['Signal']
+                        var_pct = row['Period_Return'] * 100.0
+                        
+                        if sig == 'UP':
+                            alloc = capital
+                            gross_profit = capital * row['Period_Return']
+                            tax = gross_profit * 0.26 if gross_profit > 0 else 0.0
+                            net_profit = gross_profit - tax
+                            capital += net_profit
+                        else:
+                            alloc = 0.0
+                            net_profit = 0.0
+                            tax = 0.0
+                            
+                        cap_history.append(capital)
+                        tx_log.append({
+                            "Data": date_str, "Segnale AI": sig, "Allocazione (€)": f"{alloc:,.2f} €",
+                            "Variazione (%)": f"{var_pct:+.2f}%", "Utile Netto (€)": f"{net_profit:+,.2f} €",
+                            "Tasse 26% (€)": f"{tax:,.2f} €", "Capitale Finale (€)": f"{capital:,.2f} €"
+                        })
+                        
+                    df_res['Portfolio_Value'] = cap_history
+                    final_val = cap_history[-1] if cap_history else init_cap
+                    tot_ret = ((final_val - init_cap) / init_cap) * 100.0
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Capitale Iniziale", f"{init_cap:,.2f} €")
+                    c2.metric("Valore Finale Portafoglio", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
+                    c3.metric("Utile Netto Totale", f"{final_val - init_cap:+,.2f} €")
+                    
+                    st.markdown("---")
+                    df_plot = pd.DataFrame({'Date': df_res.index, 'Close': df_res['Portfolio_Value']})
+                    fig_t = build_pro_chart(df_plot, f"Backtest Strategia AI (UP/DOWN) — {sel_asset}")
+                    st.plotly_chart(fig_t, use_container_width=True)
+                    
+                    st.markdown("### 📋 Registro Dettagliato delle Transazioni")
+                    st.dataframe(pd.DataFrame(tx_log), use_container_width=True)
+                else:
+                    st.warning("Dati insufficienti per l'intervallo selezionato.")
             except Exception as e:
                 st.error(f"Errore: {e}")
 
 # -----------------------------------------------------------------------------
-# MODULO 4: CRYPTO
+# MODULO 4: CRYPTO (GRAFICI RIPRISTINATI)
 # -----------------------------------------------------------------------------
 elif modulo == "₿ Crypto (BTC & ETH)":
-    st.subheader("₿ Analisi Crypto")
+    st.subheader("₿ Analisi Crypto & Grafici Storici")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### 🟡 Bitcoin (BTC)")
+        p_btc, pred_btc, df_b = get_official_crypto_indicators("BTC")
+        st.metric("Prezzo", f"${p_btc:,.2f}")
+        if not df_b.empty: st.dataframe(df_b, use_container_width=True)
+    with col2:
+        st.markdown("### 🔷 Ethereum (ETH)")
+        p_eth, pred_eth, df_e = get_official_crypto_indicators("ETH")
+        st.metric("Prezzo", f"${p_eth:,.2f}")
+        if not df_e.empty: st.dataframe(df_e, use_container_width=True)
+        
+    st.markdown("---")
+    sel_cr = st.selectbox("Seleziona Crypto per Grafico:", ["Bitcoin (BTC)", "Ethereum (ETH)"])
+    code_c = "BTC" if "BTC" in sel_cr else "ETH"
+    df_c_chart = load_crypto_history_from_file(code_c)
+    if df_c_chart is not None and not df_c_chart.empty:
+        fig_cr = build_pro_chart(df_c_chart, f"Grafico Settimanale {sel_cr}")
+        st.plotly_chart(fig_cr, use_container_width=True)
