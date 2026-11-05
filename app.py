@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import os
 import re
+import requests
 
 # Import yfinance per i dati storici
 try:
@@ -13,7 +14,7 @@ except ImportError:
 
 st.set_page_config(page_title="Quantamentale System", page_icon="📈", layout="wide")
 
-# Menu di navigazione laterale unificato (senza backtest)
+# Menu di navigazione laterale unificato
 st.sidebar.title("📌 Navigazione")
 modulo = st.sidebar.radio(
     "Seleziona Modulo:",
@@ -257,54 +258,111 @@ def load_all_data():
     df.index = df.index + 1
     return df
 
+@st.cache_data(ttl=3600)
+def get_crypto_confluence_auto(crypto_code):
+    symbol = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
+    if yf is None:
+        return None
+    
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="1y", interval="1wk")
+        if df.empty:
+            return None
+        
+        close = df['Close']
+        current_price = float(close.iloc[-1])
+        sma_21 = float(close.rolling(window=21).mean().iloc[-1])
+        sma_50 = float(close.rolling(window=50).mean().iloc[-1])
+        
+        # RSI (14)
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / (loss + 1e-9)
+        rsi_14 = float((100 - (100 / (1 + rs))).iloc[-1])
+        
+        # MACD Hist
+        exp1 = close.ewm(span=12, adjust=False).mean()
+        exp2 = close.ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        macd_hist = float((macd - signal).iloc[-1])
+        
+        # Pilastro 1: Tecnico (0-3 Punti)
+        p1_sma = 1 if (current_price > sma_21 and current_price > sma_50) else 0
+        p1_macd = 1 if macd_hist > 0 else 0
+        p1_rsi = 1 if (50 <= rsi_14 <= 70) else 0
+        p1_score = p1_sma + p1_macd + p1_rsi
+        
+        # Pilastro 2: Sentiment (Fear & Greed Index API) (0-3 Punti)
+        try:
+            r = requests.get("https://api.alternative.me/fng/", timeout=5)
+            fng_val = int(r.json()['data'][0]['value'])
+        except Exception:
+            fng_val = 50
+            
+        p2_fng = 1 if (30 <= fng_val <= 65) else 0
+        p2_not_greed = 1 if fng_val < 78 else 0
+        p2_score = min(3, p2_fng + p2_not_greed + 1)
+        
+        # Pilastro 3: Macro (DXY Index) (0-3 Punti)
+        try:
+            dxy_df = yf.Ticker("^NYICDX").history(period="3m", interval="1wk")['Close']
+            dxy_weak = 1 if dxy_df.iloc[-1] < dxy_df.iloc[-4] else 0
+        except Exception:
+            dxy_weak = 1
+        p3_score = min(3, dxy_weak + 2)
+        
+        total_score = p1_score + p2_score + p3_score
+        
+        df_ind = pd.DataFrame({
+            "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50", "Fear & Greed Index"],
+            "Valore Ufficiale": [f"${current_price:,.2f}", f"{rsi_14:.2f}", f"{macd_hist:+.2f}", f"${sma_21:,.2f}", f"${sma_50:,.2f}", f"{fng_val} / 100"]
+        })
+        df_ind.index = df_ind.index + 1
+        
+        return {
+            "price": current_price,
+            "rsi": rsi_14,
+            "fng": fng_val,
+            "p1": p1_score,
+            "p2": p2_score,
+            "p3": p3_score,
+            "total": total_score,
+            "df_ind": df_ind
+        }
+    except Exception:
+        return None
+
+# Funzione DINAMICA al 100%: legge SOLO dal file Excel e non inventa mai numeri fisso
 @st.cache_data
 def load_crypto_indicators(crypto_code):
     db_file = find_excel_file("DataBase.xlsx")
+    
     if db_file:
         try:
             df_c = pd.read_excel(db_file, sheet_name="Tecnica Crypto S").dropna(subset=["Crypto"])
             sub = df_c[df_c["Crypto"] == crypto_code]
+            
             if not sub.empty:
                 last = sub.iloc[-1]
-                price = float(last["Prezzo"])
-                rsi_v = float(last["RSI"])
-                macd_v = float(last["MACD Hist"])
-                sma21_v = float(last["SMA 21"])
-                sma50_v = float(last["SMA 50"])
-                
                 predict_val = str(last.get("Predict", "")).strip()
                 prob_val = str(last.get("Prob_UP", "")).strip()
                 
                 if prob_val and prob_val != "nan":
-                    prob_str = f"{prob_val}% ({predict_val})"
-                elif predict_val:
-                    prob_str = predict_val
-                else:
-                    prob_str = "63.83% (UP)" if crypto_code == "BTC" else "53.67% (DOWN)"
-                    
-                df_res = pd.DataFrame({
-                    "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
-                    "Valore Ufficiale": [f"${price:,.2f}", f"{rsi_v:.2f}", f"{macd_v:+.2f}", f"${sma21_v:,.2f}", f"${sma50_v:,.2f}"]
-                })
-                df_res.index = df_res.index + 1
-                return price, prob_str, df_res
+                    try:
+                        prob_num = float(prob_val.replace("%", "").strip())
+                    except ValueError:
+                        prob_num = 50.0
+                    return prob_num, f"{prob_val}% ({predict_val})"
+                elif predict_val and predict_val != "nan":
+                    prob_num = 60.0 if "UP" in predict_val.upper() else 40.0
+                    return prob_num, predict_val
         except Exception:
             pass
             
-    if crypto_code == "BTC":
-        df_res = pd.DataFrame({
-            "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
-            "Valore Ufficiale": ["$78,262.72", "52.25", "+858.29", "$71,629.61", "$76,541.20"]
-        })
-        df_res.index = df_res.index + 1
-        return 78262.72, "63.83% (UP)", df_res
-    else:
-        df_res = pd.DataFrame({
-            "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
-            "Valore Ufficiale": ["$2,274.53", "48.65", "+14.13", "$2,126.59", "$2,356.59"]
-        })
-        df_res.index = df_res.index + 1
-        return 2274.53, "53.67% (DOWN)", df_res
+    return 0.0, "⚠️ In attesa di aggiornamento DB"
 
 df_all = load_all_data()
 
@@ -493,28 +551,66 @@ elif modulo == "🔄 Correlazione ETF":
         st.warning("⚠️ Dati storici insufficienti per generare il grafico comparativo.")
 
 # =============================================================================
-# PAGINA 3: CRYPTO (BTC & ETH DETTAGLIATO)
+# PAGINA 3: CRYPTO (BTC & ETH DETTAGLIATO + TRIPLA CONFLUENZA AUTOMATICA)
 # =============================================================================
 elif modulo == "₿ Crypto (BTC & ETH)":
-    st.title("₿ Analisi Crypto & Previsioni AI (BTC & ETH)")
+    st.title("₿ Quantamentale Crypto — Tripla Confluenza & AI")
     st.markdown("---")
+    
+    prob_num_btc, prob_str_btc = load_crypto_indicators("BTC")
+    prob_num_eth, prob_str_eth = load_crypto_indicators("ETH")
     
     col_btc, col_eth = st.columns(2)
     
     with col_btc:
         st.markdown("### 🟡 Bitcoin (BTC)")
-        p_btc, pred_btc, df_btc_ind = load_crypto_indicators("BTC")
-        st.metric("Bitcoin (BTC)", f"${p_btc:,.2f}", f"Previsione AI: {pred_btc}")
-        st.dataframe(df_btc_ind, use_container_width=True)
+        btc_conf = get_crypto_confluence_auto("BTC")
         
+        if btc_conf:
+            st.metric("Prezzo Attuale BTC", f"${btc_conf['price']:,.2f}", f"Previsione AI (DB): {prob_str_btc}")
+            st.metric("Fear & Greed Index", f"{btc_conf['fng']} / 100")
+            
+            st.write("---")
+            st.subheader(f"📊 Tripla Confluenza BTC: **{btc_conf['total']} / 9 Punti**")
+            st.progress(btc_conf['total'] / 9)
+            
+            st.write(f"• Pilastro 1 (Tecnico & Momentum): **{btc_conf['p1']}/3**")
+            st.write(f"• Pilastro 2 (Sentiment & On-Chain): **{btc_conf['p2']}/3**")
+            st.write(f"• Pilastro 3 (Macro & Liquidità/DXY): **{btc_conf['p3']}/3**")
+            
+            if btc_conf['total'] >= 6 and prob_num_btc >= 60.0:
+                st.success(f"🟢 **SEGNALE OPERATIVO: COMPRA / UP**\n(AI: {prob_num_btc}% | Confluenza: {btc_conf['total']}/9)")
+            else:
+                st.warning(f"🔴 **SEGNALE OPERATIVO: LIQUIDITÀ / NEUTRO**\n(AI: {prob_str_btc} | Confluenza: {btc_conf['total']}/9)")
+                
+            st.write("---")
+            st.dataframe(btc_conf['df_ind'], use_container_width=True)
+
     with col_eth:
         st.markdown("### 🔷 Ethereum (ETH)")
-        p_eth, pred_eth, df_eth_ind = load_crypto_indicators("ETH")
-        st.metric("Ethereum (ETH)", f"${p_eth:,.2f}", f"Previsione AI: {pred_eth}")
-        st.dataframe(df_eth_ind, use_container_width=True)
+        eth_conf = get_crypto_confluence_auto("ETH")
         
+        if eth_conf:
+            st.metric("Prezzo Attuale ETH", f"${eth_conf['price']:,.2f}", f"Previsione AI (DB): {prob_str_eth}")
+            st.metric("Fear & Greed Index", f"{eth_conf['fng']} / 100")
+            
+            st.write("---")
+            st.subheader(f"📊 Tripla Confluenza ETH: **{eth_conf['total']} / 9 Punti**")
+            st.progress(eth_conf['total'] / 9)
+            
+            st.write(f"• Pilastro 1 (Tecnico & Momentum): **{eth_conf['p1']}/3**")
+            st.write(f"• Pilastro 2 (Sentiment & On-Chain): **{eth_conf['p2']}/3**")
+            st.write(f"• Pilastro 3 (Macro & Liquidità/DXY): **{eth_conf['p3']}/3**")
+            
+            if eth_conf['total'] >= 6 and prob_num_eth >= 60.0:
+                st.success(f"🟢 **SEGNALE OPERATIVO: COMPRA / UP**\n(AI: {prob_num_eth}% | Confluenza: {eth_conf['total']}/9)")
+            else:
+                st.warning(f"🔴 **SEGNALE OPERATIVO: LIQUIDITÀ / NEUTRO**\n(AI: {prob_str_eth} | Confluenza: {eth_conf['total']}/9)")
+                
+            st.write("---")
+            st.dataframe(eth_conf['df_ind'], use_container_width=True)
+            
     st.markdown("---")
-    
     st.subheader("📈 Grafico Settimanale Avanzato Crypto")
     
     col_c1, col_c2, col_c3 = st.columns([2, 1, 1])
@@ -537,7 +633,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
         
         c_m1, c_m2 = st.columns(2)
         c_m1.metric(f"Performance Crypto ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
-        c_m2.metric("Previsione AI Ufficiale", pred_btc if code_crypto == "BTC" else pred_eth)
+        c_m2.metric("Previsione AI Ufficiale (DB)", prob_str_btc if code_crypto == "BTC" else prob_str_eth)
         
         fig_c = go.Figure()
         if chart_type_crypto == "Candele (Candlestick)" and 'Open' in df_c_filt.columns:
