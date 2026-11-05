@@ -14,7 +14,7 @@ except ImportError:
 
 st.set_page_config(page_title="Quantamentale System", page_icon="📈", layout="wide")
 
-# Menu di navigazione laterale unificato
+# Menu di navigazione laterale
 st.sidebar.title("📌 Navigazione")
 modulo = st.sidebar.radio(
     "Seleziona Modulo:",
@@ -259,7 +259,15 @@ def load_all_data():
     return df
 
 @st.cache_data(ttl=3600)
-def get_crypto_confluence_auto(crypto_code):
+def get_global_fear_and_greed():
+    try:
+        r = requests.get("https://api.alternative.me/fng/", timeout=5)
+        return int(r.json()['data'][0]['value'])
+    except Exception:
+        return 50
+
+@st.cache_data(ttl=3600)
+def get_crypto_confluence_auto(crypto_code, fng_val):
     symbol = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
     if yf is None:
         return None
@@ -295,13 +303,7 @@ def get_crypto_confluence_auto(crypto_code):
         p1_rsi = 1 if (50 <= rsi_14 <= 70) else 0
         p1_score = p1_sma + p1_macd + p1_rsi
         
-        # Pilastro 2: Sentiment (Fear & Greed Index API) (0-3 Punti)
-        try:
-            r = requests.get("https://api.alternative.me/fng/", timeout=5)
-            fng_val = int(r.json()['data'][0]['value'])
-        except Exception:
-            fng_val = 50
-            
+        # Pilastro 2: Sentiment (0-3 Punti)
         p2_fng = 1 if (30 <= fng_val <= 65) else 0
         p2_not_greed = 1 if fng_val < 78 else 0
         p2_score = min(3, p2_fng + p2_not_greed + 1)
@@ -317,15 +319,14 @@ def get_crypto_confluence_auto(crypto_code):
         total_score = p1_score + p2_score + p3_score
         
         df_ind = pd.DataFrame({
-            "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50", "Fear & Greed Index"],
-            "Valore Ufficiale": [f"${current_price:,.2f}", f"{rsi_14:.2f}", f"{macd_hist:+.2f}", f"${sma_21:,.2f}", f"${sma_50:,.2f}", f"{fng_val} / 100"]
+            "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
+            "Valore Ufficiale": [f"${current_price:,.2f}", f"{rsi_14:.2f}", f"{macd_hist:+.2f}", f"${sma_21:,.2f}", f"${sma_50:,.2f}"]
         })
         df_ind.index = df_ind.index + 1
         
         return {
             "price": current_price,
             "rsi": rsi_14,
-            "fng": fng_val,
             "p1": p1_score,
             "p2": p2_score,
             "p3": p3_score,
@@ -335,7 +336,6 @@ def get_crypto_confluence_auto(crypto_code):
     except Exception:
         return None
 
-# Funzione DINAMICA al 100%: legge SOLO dal file Excel e non inventa mai numeri fisso
 @st.cache_data
 def load_crypto_indicators(crypto_code):
     db_file = find_excel_file("DataBase.xlsx")
@@ -557,6 +557,9 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     st.title("₿ Quantamentale Crypto — Tripla Confluenza & AI")
     st.markdown("---")
     
+    # 1. Recupero Fear & Greed globale una sola volta
+    global_fng = get_global_fear_and_greed()
+    
     prob_num_btc, prob_str_btc = load_crypto_indicators("BTC")
     prob_num_eth, prob_str_eth = load_crypto_indicators("ETH")
     
@@ -564,11 +567,10 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     
     with col_btc:
         st.markdown("### 🟡 Bitcoin (BTC)")
-        btc_conf = get_crypto_confluence_auto("BTC")
+        btc_conf = get_crypto_confluence_auto("BTC", global_fng)
         
         if btc_conf:
             st.metric("Prezzo Attuale BTC", f"${btc_conf['price']:,.2f}", f"Previsione AI (DB): {prob_str_btc}")
-            st.metric("Fear & Greed Index", f"{btc_conf['fng']} / 100")
             
             st.write("---")
             st.subheader(f"📊 Tripla Confluenza BTC: **{btc_conf['total']} / 9 Punti**")
@@ -588,11 +590,10 @@ elif modulo == "₿ Crypto (BTC & ETH)":
 
     with col_eth:
         st.markdown("### 🔷 Ethereum (ETH)")
-        eth_conf = get_crypto_confluence_auto("ETH")
+        eth_conf = get_crypto_confluence_auto("ETH", global_fng)
         
         if eth_conf:
             st.metric("Prezzo Attuale ETH", f"${eth_conf['price']:,.2f}", f"Previsione AI (DB): {prob_str_eth}")
-            st.metric("Fear & Greed Index", f"{eth_conf['fng']} / 100")
             
             st.write("---")
             st.subheader(f"📊 Tripla Confluenza ETH: **{eth_conf['total']} / 9 Punti**")
@@ -631,9 +632,11 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     if df_crypto_chart is not None and not df_crypto_chart.empty:
         df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_chart, horizon_crypto)
         
-        c_m1, c_m2 = st.columns(2)
-        c_m1.metric(f"Performance Crypto ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
+        # Tre metriche in alto sopra il grafico: Performance, Previsione AI e Fear & Greed Index unico
+        c_m1, c_m2, c_m3 = st.columns(3)
+        c_m1.metric(f"Performance ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
         c_m2.metric("Previsione AI Ufficiale (DB)", prob_str_btc if code_crypto == "BTC" else prob_str_eth)
+        c_m3.metric("Crypto Fear & Greed Index", f"{global_fng} / 100")
         
         fig_c = go.Figure()
         if chart_type_crypto == "Candele (Candlestick)" and 'Open' in df_c_filt.columns:
