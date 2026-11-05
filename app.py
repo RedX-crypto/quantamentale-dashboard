@@ -13,15 +13,14 @@ except ImportError:
 
 st.set_page_config(page_title="Quantamentale System", page_icon="📈", layout="wide")
 
-# Menu di navigazione laterale unificato
+# Menu di navigazione laterale unificato (senza backtest)
 st.sidebar.title("📌 Navigazione")
 modulo = st.sidebar.radio(
     "Seleziona Modulo:",
     [
         "🏆 Rotazione ETF & Grafici Dettagliati", 
         "🔄 Correlazione ETF",
-        "₿ Crypto (BTC & ETH)",
-        "⏳ Simulatore di Backtest"
+        "₿ Crypto (BTC & ETH)"
     ]
 )
 
@@ -395,7 +394,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
             annotation_text=f"Stop Loss: ${stop_loss_price:,.2f}", annotation_position="bottom right"
         )
         fig.add_hline(
-            y=take_profit_price, line_dash="dash", line_color="#26a69a", line_width=2,
+            y=take_profit_price, line_dash="dash", line_color="#ef5350", line_width=2,
             annotation_text=f"Take Profit: ${take_profit_price:,.2f}", annotation_position="top right"
         )
             
