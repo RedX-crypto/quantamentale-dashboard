@@ -255,7 +255,6 @@ def load_all_data():
     eligible = df[(df["Segnale"] == "UP") & (df["Prob_UP"] >= 60.0) & (df["Stato OOS"] == "✅ Valido")].head(5).index
     df.loc[eligible, "Allocazione"] = 200
     
-    # Indice da 1 in poi
     df.index = df.index + 1
     return df
 
@@ -544,23 +543,26 @@ elif modulo == "₿ Crypto (BTC & ETH)":
         st.warning("⚠️ Impossibile scaricare lo storico per la Criptovaluta selezionata.")
 
 # =============================================================================
-# PAGINA 4: SIMULATORE DI BACKTEST & REGISTRO TRANSAZIONI
+# PAGINA 4: SIMULATORE DI BACKTEST & REGISTRO TRANSAZIONI (CON ETF E CRYPTO)
 # =============================================================================
 elif modulo == "⏳ Simulatore di Backtest":
     st.title("⏳ Simulatore di Backtest Finanziario AI")
     st.markdown("---")
-    st.write("Simula la strategia di rotazione mensile (Reinvestimento del Capitale + Tassazione 26% sulle plusvalenze).")
+    st.write("Simula la strategia (Reinvestimento del Capitale + Tassazione 26% sulle plusvalenze nei periodi UP).")
     
     col_b1, col_b2 = st.columns(2)
     init_cap = col_b1.number_input("Capitale Iniziale (€)", min_value=100.0, value=1000.0, step=100.0)
     strategy_mode = col_b2.selectbox(
         "Modalità Backtest:", 
-        ["Portafoglio Rotazione Top 5 ETF (Filtri OOS)", "Singolo ETF Paese"]
+        ["Portafoglio Rotazione Top 5 ETF (Filtri OOS)", "Singolo ETF Paese", "Singola Crypto (BTC o ETH)"]
     )
     
     sel_asset = None
+    sel_crypto = None
     if strategy_mode == "Singolo ETF Paese":
         sel_asset = st.selectbox("Seleziona ETF Paese per il Backtest:", df_all["Paese"].tolist(), index=0)
+    elif strategy_mode == "Singola Crypto (BTC o ETH)":
+        sel_crypto = st.selectbox("Seleziona Criptovaluta per il Backtest:", ["Bitcoin (BTC)", "Ethereum (ETH)"])
         
     col_d1, col_d2 = st.columns(2)
     d_start = col_d1.date_input("Data Inizio", pd.to_datetime("2025-01-01"))
@@ -571,6 +573,7 @@ elif modulo == "⏳ Simulatore di Backtest":
             dt_start = pd.to_datetime(d_start)
             dt_end = pd.to_datetime(d_end)
             
+            # 1. ROTAZIONE TOP 5 ETF
             if strategy_mode == "Portafoglio Rotazione Top 5 ETF (Filtri OOS)":
                 df_valid = df_all[df_all["Stato OOS"] == "✅ Valido"].copy()
                 etf_dfs = {}
@@ -644,7 +647,8 @@ elif modulo == "⏳ Simulatore di Backtest":
                 else:
                     st.warning("⚠️ Dati insufficienti per l'intervallo di date selezionato.")
                     
-            else:
+            # 2. SINGOLO ETF PAESE
+            elif strategy_mode == "Singolo ETF Paese":
                 row_a = df_all[df_all["Paese"] == sel_asset].iloc[0]
                 df_sim = load_etf_history(row_a["Ticker_YF"])
                 
@@ -716,3 +720,77 @@ elif modulo == "⏳ Simulatore di Backtest":
                     st.dataframe(df_tx, use_container_width=True)
                 else:
                     st.warning("⚠️ Dati storici non disponibili per l'ETF selezionato.")
+
+            # 3. SINGOLA CRYPTO (BTC O ETH)
+            elif strategy_mode == "Singola Crypto (BTC o ETH)":
+                code_c = "BTC" if "BTC" in sel_crypto else "ETH"
+                df_sim_c = load_crypto_history(code_c)
+                
+                if df_sim_c is not None and not df_sim_c.empty:
+                    df_sim_c['Date'] = strip_timezone(df_sim_c['Date'])
+                    mask = (df_sim_c['Date'] >= dt_start) & (df_sim_c['Date'] <= dt_end)
+                    df_sim_c = df_sim_c.loc[mask].sort_values('Date').set_index('Date')
+                    
+                    df_res_c = df_sim_c.resample('W').agg({'Close': 'last'}).dropna()
+                    df_res_c['Period_Return'] = df_res_c['Close'].pct_change().fillna(0)
+                    df_res_c['Signal'] = np.where(df_res_c['Period_Return'].shift(1).fillna(0) >= 0, 'UP', 'DOWN')
+                    
+                    capital = init_cap
+                    cap_history = []
+                    tx_log = []
+                    
+                    for idx, row in df_res_c.iterrows():
+                        date_str = idx.strftime('%d/%m/%Y')
+                        sig = row['Signal']
+                        var_pct = row['Period_Return'] * 100.0
+                        
+                        if sig == 'UP':
+                            gross_profit = capital * row['Period_Return']
+                            tax = gross_profit * 0.26 if gross_profit > 0 else 0.0
+                            net_profit = gross_profit - tax
+                            capital += net_profit
+                            alloc = capital
+                        else:
+                            alloc = 0.0
+                            net_profit = 0.0
+                            tax = 0.0
+                            
+                        cap_history.append(capital)
+                        tx_log.append({
+                            "Data": date_str, 
+                            "Segnale AI": sig, 
+                            "Allocazione (€)": f"{alloc:,.2f} €",
+                            "Variazione (%)": f"{var_pct:+.2f}%", 
+                            "Utile Netto (€)": f"{net_profit:+,.2f} €",
+                            "Tasse 26% (€)": f"{tax:,.2f} €", 
+                            "Capitale Finale (€)": f"{capital:,.2f} €"
+                        })
+                        
+                    df_plot = pd.DataFrame({'Date': df_res_c.index, 'Close': cap_history})
+                    final_val = cap_history[-1] if cap_history else init_cap
+                    tot_ret = ((final_val - init_cap) / init_cap) * 100.0
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Capitale Iniziale", f"{init_cap:,.2f} €")
+                    c2.metric(f"Valore Finale ({sel_crypto})", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
+                    c3.metric("Utile Netto Totale", f"{final_val - init_cap:+,.2f} €")
+                    
+                    st.markdown("---")
+                    st.subheader(f"📈 Evoluzione del Capitale — Strategia AI {sel_crypto}")
+                    fig_t = go.Figure()
+                    fig_t.add_trace(go.Scatter(
+                        x=df_plot['Date'], y=df_plot['Close'], mode='lines', name="Capitale",
+                        line=dict(color='#F7931A' if code_c == "BTC" else '#627EEA', width=2.5)
+                    ))
+                    fig_t.update_layout(
+                        title=f"Andamento Capitale {sel_crypto}",
+                        yaxis_title="Valore (€)", xaxis_title="Data", template="plotly_white", height=450
+                    )
+                    st.plotly_chart(fig_t, use_container_width=True)
+                    
+                    st.subheader("📋 Registro Dettagliato Transazioni Settimanali")
+                    df_tx = pd.DataFrame(tx_log)
+                    df_tx.index = range(1, len(df_tx) + 1)
+                    st.dataframe(df_tx, use_container_width=True)
+                else:
+                    st.warning("⚠️ Dati storici non disponibili per la Crypto selezionata.")
