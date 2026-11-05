@@ -254,6 +254,9 @@ def load_all_data():
     df["Allocazione"] = 0
     eligible = df[(df["Segnale"] == "UP") & (df["Prob_UP"] >= 60.0) & (df["Stato OOS"] == "✅ Valido")].head(5).index
     df.loc[eligible, "Allocazione"] = 200
+    
+    # Indice da 1 in poi
+    df.index = df.index + 1
     return df
 
 @st.cache_data
@@ -271,7 +274,6 @@ def load_crypto_indicators(crypto_code):
                 sma21_v = float(last["SMA 21"])
                 sma50_v = float(last["SMA 50"])
                 
-                # Legge la previsione reale dinamica da Excel
                 predict_val = str(last.get("Predict", "")).strip()
                 prob_val = str(last.get("Prob_UP", "")).strip()
                 
@@ -286,21 +288,25 @@ def load_crypto_indicators(crypto_code):
                     "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
                     "Valore Ufficiale": [f"${price:,.2f}", f"{rsi_v:.2f}", f"{macd_v:+.2f}", f"${sma21_v:,.2f}", f"${sma50_v:,.2f}"]
                 })
+                df_res.index = df_res.index + 1
                 return price, prob_str, df_res
         except Exception:
             pass
             
-    # Fallback con i nuovi valori calibrati dei modelli R
     if crypto_code == "BTC":
-        return 78262.72, "63.83% (UP)", pd.DataFrame({
+        df_res = pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": ["$78,262.72", "52.25", "+858.29", "$71,629.61", "$76,541.20"]
         })
+        df_res.index = df_res.index + 1
+        return 78262.72, "63.83% (UP)", df_res
     else:
-        return 2274.53, "53.67% (DOWN)", pd.DataFrame({
+        df_res = pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": ["$2,274.53", "48.65", "+14.13", "$2,126.59", "$2,356.59"]
         })
+        df_res.index = df_res.index + 1
+        return 2274.53, "53.67% (DOWN)", df_res
 
 df_all = load_all_data()
 
@@ -435,7 +441,8 @@ elif modulo == "🔄 Correlazione ETF":
     st.markdown("---")
     st.subheader("📋 Confronto Diretto Metriche")
     df_comp = pd.DataFrame([row1, row2])[["Paese", "Esito AI", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]]
-    st.dataframe(df_comp.set_index("Paese"), use_container_width=True)
+    df_comp.index = range(1, len(df_comp) + 1)
+    st.dataframe(df_comp, use_container_width=True)
     
     st.markdown("---")
     st.subheader("📈 Grafico Comparativo dei Prezzi (Base 100)")
@@ -631,7 +638,9 @@ elif modulo == "⏳ Simulatore di Backtest":
                     st.plotly_chart(fig_t, use_container_width=True)
                     
                     st.subheader("📋 Registro Dettagliato Transazioni Mensili")
-                    st.dataframe(pd.DataFrame(tx_log), use_container_width=True)
+                    df_tx = pd.DataFrame(tx_log)
+                    df_tx.index = range(1, len(df_tx) + 1)
+                    st.dataframe(df_tx, use_container_width=True)
                 else:
                     st.warning("⚠️ Dati insufficienti per l'intervallo di date selezionato.")
                     
@@ -702,6 +711,8 @@ elif modulo == "⏳ Simulatore di Backtest":
                     st.plotly_chart(fig_t, use_container_width=True)
                     
                     st.subheader("📋 Registro Dettagliato Transazioni")
-                    st.dataframe(pd.DataFrame(tx_log), use_container_width=True)
+                    df_tx = pd.DataFrame(tx_log)
+                    df_tx.index = range(1, len(df_tx) + 1)
+                    st.dataframe(df_tx, use_container_width=True)
                 else:
                     st.warning("⚠️ Dati storici non disponibili per l'ETF selezionato.")
