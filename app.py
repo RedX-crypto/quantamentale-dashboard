@@ -271,13 +271,16 @@ def load_crypto_indicators(crypto_code):
                 sma21_v = float(last["SMA 21"])
                 sma50_v = float(last["SMA 50"])
                 
-                predict_val = str(last.get("Predict", "UP")).strip()
-                if predict_val == "UP":
-                    prob_str = "68.5% (UP)" if crypto_code == "BTC" else "62.0% (UP)"
-                elif predict_val == "DOWN":
-                    prob_str = "54.0% (DOWN)"
-                else:
+                # Legge la previsione reale dinamica da Excel
+                predict_val = str(last.get("Predict", "")).strip()
+                prob_val = str(last.get("Prob_UP", "")).strip()
+                
+                if prob_val and prob_val != "nan":
+                    prob_str = f"{prob_val}% ({predict_val})"
+                elif predict_val:
                     prob_str = predict_val
+                else:
+                    prob_str = "63.83% (UP)" if crypto_code == "BTC" else "53.67% (DOWN)"
                     
                 df_res = pd.DataFrame({
                     "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
@@ -287,13 +290,14 @@ def load_crypto_indicators(crypto_code):
         except Exception:
             pass
             
+    # Fallback con i nuovi valori calibrati dei modelli R
     if crypto_code == "BTC":
-        return 78262.72, "68.5% (UP)", pd.DataFrame({
+        return 78262.72, "63.83% (UP)", pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": ["$78,262.72", "52.25", "+858.29", "$71,629.61", "$76,541.20"]
         })
     else:
-        return 2274.53, "54.0% (DOWN)", pd.DataFrame({
+        return 2274.53, "53.67% (DOWN)", pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": ["$2,274.53", "48.65", "+14.13", "$2,126.59", "$2,356.59"]
         })
