@@ -362,10 +362,24 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     if df_chart is not None and not df_chart.empty:
         df_filt, p_start, p_end, ret_pct = filter_by_horizon(df_chart, horizon_etf)
         
+        # --- CALCOLO DINAMICO STOP LOSS E TAKE PROFIT DEL MESE ---
+        # Basato sulla volatilità a 3 mesi (deviazione standard dei rendimenti percentuali) o stima di ATR mensile (~4%)
+        recent_closes = df_chart['Close'].tail(60)
+        daily_rets = recent_closes.pct_change().dropna()
+        vol_monthly = float(daily_rets.std() * np.sqrt(21)) if len(daily_rets) > 10 else 0.05
+        
+        stop_loss_price = p_end * (1.0 - max(0.03, vol_monthly * 1.2))
+        take_profit_price = p_end * (1.0 + max(0.06, vol_monthly * 2.0))
+        
         m_col1, m_col2, m_col3 = st.columns(3)
         m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: ${p_end:,.2f}")
         m_col2.metric("Esito AI", row_country['Esito AI'])
         m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
+        
+        # Due righe aggiuntive dedicate a Stop Loss e Take Profit del mese
+        sl_col1, sl_col2 = st.columns(2)
+        sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"${stop_loss_price:,.2f}", f"-{((p_end - stop_loss_price)/p_end)*100:.2f}%", delta_color="inverse")
+        sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"${take_profit_price:,.2f}", f"+{((take_profit_price - p_end)/p_end)*100:.2f}%")
         
         fig = go.Figure()
         if chart_type == "Candele (Candlestick)" and 'Open' in df_filt.columns:
@@ -379,9 +393,19 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
                 line=dict(color='#2962FF', width=2.5)
             ))
             
+        # Linee orizzontali di Stop Loss (Rossa) e Take Profit (Verde)
+        fig.add_hline(
+            y=stop_loss_price, line_dash="dash", line_color="#ef5350", line_width=2,
+            annotation_text=f"Stop Loss: ${stop_loss_price:,.2f}", annotation_position="bottom right"
+        )
+        fig.add_hline(
+            y=take_profit_price, line_dash="dash", line_color="#26a69a", line_width=2,
+            annotation_text=f"Take Profit: ${take_profit_price:,.2f}", annotation_position="top right"
+        )
+            
         fig.update_layout(
-            title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']})</b>", font=dict(size=16)),
-            yaxis_title="Prezzo ($)", xaxis_title="Data", template="plotly_white", height=500,
+            title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']}) con Livelli Operativi</b>", font=dict(size=16)),
+            yaxis_title="Prezzo ($)", xaxis_title="Data", template="plotly_white", height=520,
             margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
             yaxis=dict(type="log" if is_log else "linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
         )
@@ -543,7 +567,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
         st.warning("⚠️ Impossibile scaricare lo storico per la Criptovaluta selezionata.")
 
 # =============================================================================
-# PAGINA 4: SIMULATORE DI BACKTEST & REGISTRO TRANSAZIONI (CON ETF E CRYPTO)
+# PAGINA 4: SIMULATORE DI BACKTEST & REGISTRO TRANSAZIONI
 # =============================================================================
 elif modulo == "⏳ Simulatore di Backtest":
     st.title("⏳ Simulatore di Backtest Finanziario AI")
