@@ -5,16 +5,20 @@ import plotly.graph_objects as go
 import os
 import re
 
-# Import yfinance per i grafici storici degli ETF
+# Import yfinance per i dati storici
 try:
     import yfinance as yf
 except ImportError:
     yf = None
 
-st.set_page_config(page_title="Rotazione ETF & Grafici", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Quantamentale System", page_icon="📈", layout="wide")
 
-st.title("🏆 Rotazione ETF & Tripla Confluenza Quantamentale")
-st.markdown("---")
+# Menu di navigazione laterale
+st.sidebar.title("📌 Navigazione")
+modulo = st.sidebar.radio(
+    "Seleziona Modulo:",
+    ["🏆 Rotazione ETF & Grafici Dettagliati", "🔄 Correlazione ETF"]
+)
 
 # Funzione per individuare DataBase.xlsx
 def find_excel_file(filename):
@@ -231,99 +235,172 @@ def load_all_data():
 
 df_all = load_all_data()
 
-# 1. Tabella principale
-st.subheader("📊 Tabella Confluenza Quantamentale")
-st.dataframe(
-    df_all[["Paese", "Esito AI", "Allocazione", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]],
-    use_container_width=True
-)
+# =============================================================================
+# PAGINA 1: ROTAZIONE ETF & GRAFICI DETTAGLIATI
+# =============================================================================
+if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
+    st.title("🏆 Rotazione ETF & Tripla Confluenza Quantamentale")
+    st.markdown("---")
 
-st.markdown("---")
+    st.subheader("📊 Tabella Confluenza Quantamentale")
+    st.dataframe(
+        df_all[["Paese", "Esito AI", "Allocazione", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]],
+        use_container_width=True
+    )
 
-# 2. Nuvolette di Sintesi (Le 4 metriche richieste)
-st.subheader("📌 Nuvolette di Sintesi")
-c1, c2, c3, c4 = st.columns(4)
+    st.markdown("---")
 
-# - Migliore UP (Top Pick AI)
-best_up = df_all[df_all["Segnale"] == "UP"].iloc[0] if not df_all[df_all["Segnale"] == "UP"].empty else df_all.iloc[0]
-c1.metric("🟢 Migliore UP", best_up["Paese"], best_up["Esito AI"])
+    st.subheader("📌 Nuvolette di Sintesi")
+    c1, c2, c3, c4 = st.columns(4)
 
-# - Migliore DOWN (Worst Pick AI sconsigliato)
-down_df = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
-best_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
-c2.metric("🔴 Migliore DOWN", best_down["Paese"], best_down["Esito AI"])
+    best_up = df_all[df_all["Segnale"] == "UP"].iloc[0] if not df_all[df_all["Segnale"] == "UP"].empty else df_all.iloc[0]
+    c1.metric("🟢 Migliore UP", best_up["Paese"], best_up["Esito AI"])
 
-# - Migliore del Mese (% prezzo)
-best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
-c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"])
+    down_df = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
+    best_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
+    c2.metric("🔴 Migliore DOWN", best_down["Paese"], best_down["Esito AI"])
 
-# - Peggiore del Mese (% prezzo)
-worst_mom = df_all.sort_values(by="Mom_1M_num", ascending=True).iloc[0]
-c4.metric("📉 Peggiore del Mese (Prezzo)", worst_mom["Paese"], worst_mom["Mom_1M"])
+    best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
+    c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"])
 
-st.markdown("---")
+    worst_mom = df_all.sort_values(by="Mom_1M_num", ascending=True).iloc[0]
+    c4.metric("📉 Peggiore del Mese (Prezzo)", worst_mom["Paese"], worst_mom["Mom_1M"])
 
-# 3. Grafico Interattivo con Candele e Selezione Orizzonte Temporale
-st.subheader("📈 Grafico Storico Avanzato ETF Paese")
+    st.markdown("---")
 
-col_sel1, col_sel2, col_sel3 = st.columns([2, 1, 1])
-selected_country = col_sel1.selectbox("Seleziona ETF Paese:", df_all["Paese"].tolist())
-chart_type = col_sel2.radio("Tipo Grafico:", ["Linea", "Candele (Candlestick)"], horizontal=True)
-is_log = col_sel3.checkbox("Scala Logaritmica", value=True)
+    st.subheader("📈 Grafico Storico Avanzato ETF Paese")
 
-horizon_etf = st.radio(
-    "Orizzonte Temporale:", 
-    ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], 
-    index=6, 
-    horizontal=True
-)
+    col_sel1, col_sel2, col_sel3 = st.columns([2, 1, 1])
+    selected_country = col_sel1.selectbox("Seleziona ETF Paese:", df_all["Paese"].tolist())
+    chart_type = col_sel2.radio("Tipo Grafico:", ["Linea", "Candele (Candlestick)"], horizontal=True)
+    is_log = col_sel3.checkbox("Scala Logaritmica", value=True)
 
-row_country = df_all[df_all["Paese"] == selected_country].iloc[0]
-df_chart = load_etf_history(row_country["Ticker_YF"])
+    horizon_etf = st.radio(
+        "Orizzonte Temporale:", 
+        ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], 
+        index=6, 
+        horizontal=True
+    )
 
-if df_chart is not None and not df_chart.empty:
-    df_filt, p_start, p_end, ret_pct = filter_by_horizon(df_chart, horizon_etf)
-    
-    # Card di dettaglio prezzo sopra il grafico
-    m_col1, m_col2, m_col3 = st.columns(3)
-    m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: ${p_end:,.2f}")
-    m_col2.metric("Esito AI", row_country['Esito AI'])
-    m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
-    
-    # Costruzione Grafico Plotly
-    fig = go.Figure()
-    if chart_type == "Candele (Candlestick)" and 'Open' in df_filt.columns:
-        fig.add_trace(go.Candlestick(
-            x=df_filt['Date'],
-            open=df_filt['Open'],
-            high=df_filt['High'],
-            low=df_filt['Low'],
-            close=df_filt['Close'],
-            name=selected_country,
-            increasing_line_color='#26a69a',
-            decreasing_line_color='#ef5350'
-        ))
-    else:
-        fig.add_trace(go.Scatter(
-            x=df_filt['Date'],
-            y=df_filt['Close'],
-            mode='lines',
-            name=selected_country,
-            line=dict(color='#2962FF', width=2.5)
-        ))
+    row_country = df_all[df_all["Paese"] == selected_country].iloc[0]
+    df_chart = load_etf_history(row_country["Ticker_YF"])
+
+    if df_chart is not None and not df_chart.empty:
+        df_filt, p_start, p_end, ret_pct = filter_by_horizon(df_chart, horizon_etf)
         
-    fig.update_layout(
-        title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']})</b>", font=dict(size=16)),
-        yaxis_title="Prezzo ($)",
-        xaxis_title="Data",
-        template="plotly_white",
-        height=500,
-        margin=dict(l=30, r=30, t=50, b=30),
-        xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
-        yaxis=dict(type="log" if is_log else "linear", showgrid=True, gridcolor='#F0F2F5'),
-        showlegend=False
+        m_col1, m_col2, m_col3 = st.columns(3)
+        m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: ${p_end:,.2f}")
+        m_col2.metric("Esito AI", row_country['Esito AI'])
+        m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
+        
+        fig = go.Figure()
+        if chart_type == "Candele (Candlestick)" and 'Open' in df_filt.columns:
+            fig.add_trace(go.Candlestick(
+                x=df_filt['Date'], open=df_filt['Open'], high=df_filt['High'], low=df_filt['Low'], close=df_filt['Close'],
+                name=selected_country, increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=df_filt['Date'], y=df_filt['Close'], mode='lines', name=selected_country,
+                line=dict(color='#2962FF', width=2.5)
+            ))
+            
+        fig.update_layout(
+            title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']})</b>", font=dict(size=16)),
+            yaxis_title="Prezzo ($)", xaxis_title="Data", template="plotly_white", height=500,
+            margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
+            yaxis=dict(type="log" if is_log else "linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("⚠️ Impossibile scaricare lo storico dati per l'ETF selezionato.")
+
+# =============================================================================
+# PAGINA 2: CORRELAZIONE ETF
+# =============================================================================
+elif modulo == "🔄 Correlazione ETF":
+    st.title("🔄 Calcolatore di Correlazione tra 2 ETF Paese")
+    st.markdown("---")
+    
+    st.write("Seleziona due Paesi per confrontare le loro metriche e analizzare la correlazione storica dei relativi ETF.")
+    
+    col1, col2 = st.columns(2)
+    country1 = col1.selectbox("Seleziona Primo Paese:", df_all["Paese"].tolist(), index=0)
+    country2 = col2.selectbox("Seleziona Secondo Paese:", df_all["Paese"].tolist(), index=1 if len(df_all) > 1 else 0)
+    
+    row1 = df_all[df_all["Paese"] == country1].iloc[0]
+    row2 = df_all[df_all["Paese"] == country2].iloc[0]
+    
+    # Caricamento storici
+    df_h1 = load_etf_history(row1["Ticker_YF"])
+    df_h2 = load_etf_history(row2["Ticker_YF"])
+    
+    corr_val = 0.0
+    df_merged = None
+    
+    if df_h1 is not None and df_h2 is not None and not df_h1.empty and not df_h2.empty:
+        df_merged = pd.merge(df_h1[['Date', 'Close']], df_h2[['Date', 'Close']], on='Date', suffixes=(f'_{country1}', f'_{country2}')).dropna()
+        if len(df_merged) > 10:
+            ret1 = df_merged[f'Close_{country1}'].pct_change().dropna()
+            ret2 = df_merged[f'Close_{country2}'].pct_change().dropna()
+            corr_val = ret1.corr(ret2)
+            
+    # Nuvoletta Indice di Correlazione
+    st.markdown("---")
+    st.subheader("📊 Indice di Correlazione Storica")
+    
+    if corr_val > 0.7:
+        corr_label = "Forte Correlazione Positiva 🔴 (Muovono insieme)"
+    elif corr_val > 0.3:
+        corr_label = "Moderata Correlazione Positiva 🟡"
+    elif corr_val > -0.3:
+        corr_label = "Decorrelati 🟢 (Ottimi per Diversificare)"
+    else:
+        corr_label = "Correlazione Inversa 🔵 (Muovono in direzioni opposte)"
+        
+    st.metric(
+        label=f"Coefficiente di Correlazione ({country1} vs {country2})",
+        value=f"{corr_val:.2f}",
+        delta=corr_label,
+        delta_color="off"
     )
     
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("⚠️ Impossibile scaricare lo storico dati per l'ETF selezionato.")
+    st.markdown("---")
+    
+    # Tabella Comparativa Confluenza
+    st.subheader("📋 Confronto Diretto Metriche")
+    df_comp = pd.DataFrame([row1, row2])[["Paese", "Esito AI", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]]
+    st.dataframe(df_comp.set_index("Paese"), use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Grafico Comparativo Normalizzato (Base 100)
+    st.subheader("📈 Grafico Comparativo dei Prezzi (Base 100)")
+    
+    if df_merged is not None and not df_merged.empty:
+        # Normalizzazione Base 100 per confronto diretto
+        p1_col = f'Close_{country1}'
+        p2_col = f'Close_{country2}'
+        
+        df_merged['Norm1'] = (df_merged[p1_col] / df_merged[p1_col].iloc[0]) * 100
+        df_merged['Norm2'] = (df_merged[p2_col] / df_merged[p2_col].iloc[0]) * 100
+        
+        fig_corr = go.Figure()
+        fig_corr.add_trace(go.Scatter(
+            x=df_merged['Date'], y=df_merged['Norm1'], mode='lines',
+            name=f"{country1} ({row1['Ticker_YF']})", line=dict(color='#2962FF', width=2)
+        ))
+        fig_corr.add_trace(go.Scatter(
+            x=df_merged['Date'], y=df_merged['Norm2'], mode='lines',
+            name=f"{country2} ({row2['Ticker_YF']})", line=dict(color='#FF6D00', width=2)
+        ))
+        
+        fig_corr.update_layout(
+            title=dict(text=f"<b>Andamento Storico Comparativo (Base 100 = Inizio): {country1} vs {country2}</b>", font=dict(size=16)),
+            yaxis_title="Valore Normalizzato (Base 100)", xaxis_title="Data", template="plotly_white", height=500,
+            margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
+            yaxis=dict(showgrid=True, gridcolor='#F0F2F5'), showlegend=True
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+    else:
+        st.warning("⚠️ Dati storici insufficienti per generare il grafico comparativo.")
