@@ -362,8 +362,6 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     if df_chart is not None and not df_chart.empty:
         df_filt, p_start, p_end, ret_pct = filter_by_horizon(df_chart, horizon_etf)
         
-        # --- CALCOLO DINAMICO STOP LOSS E TAKE PROFIT DEL MESE ---
-        # Basato sulla volatilità a 3 mesi (deviazione standard dei rendimenti percentuali) o stima di ATR mensile (~4%)
         recent_closes = df_chart['Close'].tail(60)
         daily_rets = recent_closes.pct_change().dropna()
         vol_monthly = float(daily_rets.std() * np.sqrt(21)) if len(daily_rets) > 10 else 0.05
@@ -376,7 +374,6 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         m_col2.metric("Esito AI", row_country['Esito AI'])
         m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
         
-        # Due righe aggiuntive dedicate a Stop Loss e Take Profit del mese
         sl_col1, sl_col2 = st.columns(2)
         sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"${stop_loss_price:,.2f}", f"-{((p_end - stop_loss_price)/p_end)*100:.2f}%", delta_color="inverse")
         sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"${take_profit_price:,.2f}", f"+{((take_profit_price - p_end)/p_end)*100:.2f}%")
@@ -393,7 +390,6 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
                 line=dict(color='#2962FF', width=2.5)
             ))
             
-        # Linee orizzontali di Stop Loss (Rossa) e Take Profit (Verde)
         fig.add_hline(
             y=stop_loss_price, line_dash="dash", line_color="#ef5350", line_width=2,
             annotation_text=f"Stop Loss: ${stop_loss_price:,.2f}", annotation_position="bottom right"
@@ -570,9 +566,9 @@ elif modulo == "₿ Crypto (BTC & ETH)":
 # PAGINA 4: SIMULATORE DI BACKTEST & REGISTRO TRANSAZIONI
 # =============================================================================
 elif modulo == "⏳ Simulatore di Backtest":
-    st.title("⏳ Simulatore di Backtest Finanziario AI")
+    st.title("⏳ Simulatore di Backtest Finanziario AI (con Stop Loss & Take Profit)")
     st.markdown("---")
-    st.write("Simula la strategia (Reinvestimento del Capitale + Tassazione 26% sulle plusvalenze nei periodi UP).")
+    st.write("Simula la strategia con gestione attiva del rischio (Stop Loss e Take Profit basati sulla volatilità + Tassazione 26% sulle plusvalenze).")
     
     col_b1, col_b2 = st.columns(2)
     init_cap = col_b1.number_input("Capitale Iniziale (€)", min_value=100.0, value=1000.0, step=100.0)
@@ -593,11 +589,11 @@ elif modulo == "⏳ Simulatore di Backtest":
     d_end = col_d2.date_input("Data Fine", pd.to_datetime("2026-11-01"))
     
     if st.button("🚀 Esegui Backtest"):
-        with st.spinner("Calcolo delle transazioni e del rendimento storico..."):
+        with st.spinner("Calcolo delle transazioni con Stop Loss, Take Profit e rendimento storico..."):
             dt_start = pd.to_datetime(d_start)
             dt_end = pd.to_datetime(d_end)
             
-            # 1. ROTAZIONE TOP 5 ETF
+            # 1. ROTAZIONE TOP 5 ETF (CON STOP LOSS E TAKE PROFIT ATTIVI)
             if strategy_mode == "Portafoglio Rotazione Top 5 ETF (Filtri OOS)":
                 df_valid = df_all[df_all["Stato OOS"] == "✅ Valido"].copy()
                 etf_dfs = {}
@@ -624,8 +620,29 @@ elif modulo == "⏳ Simulatore di Backtest":
                         prev_returns = df_returns.iloc[idx - 1]
                         
                         top_5 = prev_returns.nlargest(5).index.tolist()
-                        current_month_rets = df_returns.iloc[idx][top_5]
-                        avg_ret = current_month_rets.mean()
+                        
+                        # Calcolo rendimenti corretti con SL e TP per ciascun ETF della Top 5
+                        adjusted_rets = []
+                        for asset in top_5:
+                            p_curr = df_monthly[asset].iloc[idx - 1]
+                            p_next = df_monthly[asset].iloc[idx]
+                            
+                            # Calcolo volatilità a 3 mesi per determinare SL e TP dinamici
+                            hist_asset = df_prices[asset].loc[:df_monthly.index[idx-1]].tail(60)
+                            vol_m = float(hist_asset.pct_change().dropna().std() * np.sqrt(21)) if len(hist_asset) > 10 else 0.05
+                            
+                            sl_price = p_curr * (1.0 - max(0.03, vol_m * 1.2))
+                            tp_price = p_curr * (1.0 + max(0.06, vol_m * 2.0))
+                            
+                            ret_real = (p_next - p_curr) / p_curr
+                            if p_next <= sl_price:
+                                ret_real = (sl_price - p_curr) / p_curr # Stop Loss scattato
+                            elif p_next >= tp_price:
+                                ret_real = (tp_price - p_curr) / p_curr # Take Profit raggiunto
+                                
+                            adjusted_rets.append(ret_real)
+                            
+                        avg_ret = np.mean(adjusted_rets) if adjusted_rets else 0.0
                         
                         gross_profit = capital * avg_ret
                         tax = gross_profit * 0.26 if gross_profit > 0 else 0.0
@@ -648,18 +665,18 @@ elif modulo == "⏳ Simulatore di Backtest":
                     
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Capitale Iniziale", f"{init_cap:,.2f} €")
-                    c2.metric("Valore Finale Portafoglio", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
+                    c2.metric("Valore Finale Portafoglio (SL/TP Attivi)", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
                     c3.metric("Utile Netto Totale", f"{final_val - init_cap:+,.2f} €")
                     
                     st.markdown("---")
-                    st.subheader("📈 Evoluzione del Capitale Nel Tempo")
+                    st.subheader("📈 Evoluzione del Capitale Nel Tempo (SL & TP)")
                     fig_t = go.Figure()
                     fig_t.add_trace(go.Scatter(
                         x=df_plot['Date'], y=df_plot['Close'], mode='lines', name="Capitale",
                         line=dict(color='#00C853', width=2.5)
                     ))
                     fig_t.update_layout(
-                        title="Andamento Capitale Portafoglio Top 5",
+                        title="Andamento Capitale Portafoglio Top 5 con Gestione Rischio",
                         yaxis_title="Valore (€)", xaxis_title="Data", template="plotly_white", height=450
                     )
                     st.plotly_chart(fig_t, use_container_width=True)
@@ -671,7 +688,7 @@ elif modulo == "⏳ Simulatore di Backtest":
                 else:
                     st.warning("⚠️ Dati insufficienti per l'intervallo di date selezionato.")
                     
-            # 2. SINGOLO ETF PAESE
+            # 2. SINGOLO ETF PAESE (CON STOP LOSS E TAKE PROFIT)
             elif strategy_mode == "Singolo ETF Paese":
                 row_a = df_all[df_all["Paese"] == sel_asset].iloc[0]
                 df_sim = load_etf_history(row_a["Ticker_YF"])
@@ -689,13 +706,31 @@ elif modulo == "⏳ Simulatore di Backtest":
                     cap_history = []
                     tx_log = []
                     
-                    for idx, row in df_res.iterrows():
+                    for idx_i in range(len(df_res)):
+                        idx = df_res.index[idx_i]
+                        row = df_res.loc[idx]
                         date_str = idx.strftime('%d/%m/%Y')
                         sig = row['Signal']
-                        var_pct = row['Period_Return'] * 100.0
+                        
+                        ret_real = row['Period_Return']
+                        if idx_i > 0 and sig == 'UP':
+                            p_curr = df_res['Close'].iloc[idx_i - 1]
+                            p_next = row['Close']
+                            hist_sub = df_sim['Close'].loc[:df_res.index[idx_i-1]].tail(60)
+                            vol_m = float(hist_sub.pct_change().dropna().std() * np.sqrt(21)) if len(hist_sub) > 10 else 0.05
+                            
+                            sl_price = p_curr * (1.0 - max(0.03, vol_m * 1.2))
+                            tp_price = p_curr * (1.0 + max(0.06, vol_m * 2.0))
+                            
+                            if p_next <= sl_price:
+                                ret_real = (sl_price - p_curr) / p_curr
+                            elif p_next >= tp_price:
+                                ret_real = (tp_price - p_curr) / p_curr
+                        
+                        var_pct = ret_real * 100.0
                         
                         if sig == 'UP':
-                            gross_profit = capital * row['Period_Return']
+                            gross_profit = capital * ret_real
                             tax = gross_profit * 0.26 if gross_profit > 0 else 0.0
                             net_profit = gross_profit - tax
                             capital += net_profit
