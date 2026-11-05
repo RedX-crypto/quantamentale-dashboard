@@ -20,7 +20,8 @@ modulo = st.sidebar.radio(
     [
         "🏆 Rotazione ETF & Grafici Dettagliati", 
         "🔄 Correlazione ETF",
-        "₿ Crypto (BTC & ETH)"
+        "₿ Crypto (BTC & ETH)",
+        "⏳ Simulatore di Backtest"
     ]
 )
 
@@ -270,7 +271,6 @@ def load_crypto_indicators(crypto_code):
                 sma21_v = float(last["SMA 21"])
                 sma50_v = float(last["SMA 50"])
                 
-                # Previsione AI
                 predict_val = str(last.get("Predict", "UP")).strip()
                 if predict_val == "UP":
                     prob_str = "68.5% (UP)" if crypto_code == "BTC" else "62.0% (UP)"
@@ -470,7 +470,6 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     st.title("₿ Analisi Crypto & Previsioni AI (BTC & ETH)")
     st.markdown("---")
     
-    # 1. Card Nome Crypto + Esito AI + Tabella Dati Essenziali per BTC ed ETH
     col_btc, col_eth = st.columns(2)
     
     with col_btc:
@@ -487,7 +486,6 @@ elif modulo == "₿ Crypto (BTC & ETH)":
         
     st.markdown("---")
     
-    # 2. Grafico Storico Settimanale Avanzato per Crypto con Frangente Temporale
     st.subheader("📈 Grafico Settimanale Avanzato Crypto")
     
     col_c1, col_c2, col_c3 = st.columns([2, 1, 1])
@@ -506,14 +504,12 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     df_crypto_chart = load_crypto_history(code_crypto)
     
     if df_crypto_chart is not None and not df_crypto_chart.empty:
-        df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_crypto_chart if 'df_crypto_crypto_chart' in locals() else df_crypto_chart, horizon_crypto)
+        df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_chart, horizon_crypto)
         
-        # Metriche sopra il grafico
         c_m1, c_m2 = st.columns(2)
         c_m1.metric(f"Performance Crypto ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
         c_m2.metric("Previsione AI Ufficiale", pred_btc if code_crypto == "BTC" else pred_eth)
         
-        # Costruzione Grafico Plotly Crypto
         fig_c = go.Figure()
         if chart_type_crypto == "Candele (Candlestick)" and 'Open' in df_c_filt.columns:
             fig_c.add_trace(go.Candlestick(
@@ -535,3 +531,173 @@ elif modulo == "₿ Crypto (BTC & ETH)":
         st.plotly_chart(fig_c, use_container_width=True)
     else:
         st.warning("⚠️ Impossibile scaricare lo storico per la Criptovaluta selezionata.")
+
+# =============================================================================
+# PAGINA 4: SIMULATORE DI BACKTEST & REGISTRO TRANSAZIONI
+# =============================================================================
+elif modulo == "⏳ Simulatore di Backtest":
+    st.title("⏳ Simulatore di Backtest Finanziario AI")
+    st.markdown("---")
+    st.write("Simula la strategia di rotazione mensile (Reinvestimento del Capitale + Tassazione 26% sulle plusvalenze).")
+    
+    col_b1, col_b2 = st.columns(2)
+    init_cap = col_b1.number_input("Capitale Iniziale (€)", min_value=100.0, value=1000.0, step=100.0)
+    strategy_mode = col_b2.selectbox(
+        "Modalità Backtest:", 
+        ["Portafoglio Rotazione Top 5 ETF (Filtri OOS)", "Singolo ETF Paese"]
+    )
+    
+    sel_asset = None
+    if strategy_mode == "Singolo ETF Paese":
+        sel_asset = st.selectbox("Seleziona ETF Paese per il Backtest:", df_all["Paese"].tolist(), index=0)
+        
+    col_d1, col_d2 = st.columns(2)
+    d_start = col_d1.date_input("Data Inizio", pd.to_datetime("2025-01-01"))
+    d_end = col_d2.date_input("Data Fine", pd.to_datetime("2026-11-01"))
+    
+    if st.button("🚀 Esegui Backtest"):
+        with st.spinner("Calcolo delle transazioni e del rendimento storico..."):
+            dt_start = pd.to_datetime(d_start)
+            dt_end = pd.to_datetime(d_end)
+            
+            if strategy_mode == "Portafoglio Rotazione Top 5 ETF (Filtri OOS)":
+                df_valid = df_all[df_all["Stato OOS"] == "✅ Valido"].copy()
+                etf_dfs = {}
+                for _, row in df_valid.iterrows():
+                    df_h = load_etf_history(row["Ticker_YF"])
+                    if df_h is not None and not df_h.empty:
+                        df_h['Date'] = strip_timezone(df_h['Date'])
+                        etf_dfs[row["Paese"]] = df_h.sort_values('Date').set_index('Date')['Close']
+                        
+                df_prices = pd.DataFrame(etf_dfs).dropna(how='all').sort_index()
+                mask = (df_prices.index >= dt_start) & (df_prices.index <= dt_end)
+                df_prices = df_prices.loc[mask]
+                
+                if len(df_prices) > 2:
+                    df_monthly = df_prices.resample('ME').last().dropna(how='all')
+                    df_returns = df_monthly.pct_change().fillna(0)
+                    
+                    capital = init_cap
+                    cap_history = []
+                    tx_log = []
+                    
+                    for idx in range(1, len(df_returns)):
+                        date_str = df_returns.index[idx].strftime('%d/%m/%Y')
+                        prev_returns = df_returns.iloc[idx - 1]
+                        
+                        top_5 = prev_returns.nlargest(5).index.tolist()
+                        current_month_rets = df_returns.iloc[idx][top_5]
+                        avg_ret = current_month_rets.mean()
+                        
+                        gross_profit = capital * avg_ret
+                        tax = gross_profit * 0.26 if gross_profit > 0 else 0.0
+                        net_profit = gross_profit - tax
+                        capital += net_profit
+                        
+                        cap_history.append(capital)
+                        tx_log.append({
+                            "Data": date_str,
+                            "Top 5 ETF Validi": ", ".join(top_5),
+                            "Rendimento Medio (%)": f"{avg_ret*100:+.2f}%",
+                            "Utile Netto (€)": f"{net_profit:+,.2f} €",
+                            "Tasse 26% (€)": f"{tax:,.2f} €",
+                            "Capitale Finale (€)": f"{capital:,.2f} €"
+                        })
+                        
+                    df_plot = pd.DataFrame({'Date': df_returns.index[1:len(cap_history)+1], 'Close': cap_history})
+                    final_val = cap_history[-1] if cap_history else init_cap
+                    tot_ret = ((final_val - init_cap) / init_cap) * 100.0
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Capitale Iniziale", f"{init_cap:,.2f} €")
+                    c2.metric("Valore Finale Portafoglio", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
+                    c3.metric("Utile Netto Totale", f"{final_val - init_cap:+,.2f} €")
+                    
+                    st.markdown("---")
+                    st.subheader("📈 Evoluzione del Capitale Nel Tempo")
+                    fig_t = go.Figure()
+                    fig_t.add_trace(go.Scatter(
+                        x=df_plot['Date'], y=df_plot['Close'], mode='lines', name="Capitale",
+                        line=dict(color='#00C853', width=2.5)
+                    ))
+                    fig_t.update_layout(
+                        title="Andamento Capitale Portafoglio Top 5",
+                        yaxis_title="Valore (€)", xaxis_title="Data", template="plotly_white", height=450
+                    )
+                    st.plotly_chart(fig_t, use_container_width=True)
+                    
+                    st.subheader("📋 Registro Dettagliato Transazioni Mensili")
+                    st.dataframe(pd.DataFrame(tx_log), use_container_width=True)
+                else:
+                    st.warning("⚠️ Dati insufficienti per l'intervallo di date selezionato.")
+                    
+            else:
+                row_a = df_all[df_all["Paese"] == sel_asset].iloc[0]
+                df_sim = load_etf_history(row_a["Ticker_YF"])
+                
+                if df_sim is not None and not df_sim.empty:
+                    df_sim['Date'] = strip_timezone(df_sim['Date'])
+                    mask = (df_sim['Date'] >= dt_start) & (df_sim['Date'] <= dt_end)
+                    df_sim = df_sim.loc[mask].sort_values('Date').set_index('Date')
+                    
+                    df_res = df_sim.resample('ME').agg({'Close': 'last'}).dropna()
+                    df_res['Period_Return'] = df_res['Close'].pct_change().fillna(0)
+                    df_res['Signal'] = np.where(df_res['Period_Return'].shift(1).fillna(0) >= 0, 'UP', 'DOWN')
+                    
+                    capital = init_cap
+                    cap_history = []
+                    tx_log = []
+                    
+                    for idx, row in df_res.iterrows():
+                        date_str = idx.strftime('%d/%m/%Y')
+                        sig = row['Signal']
+                        var_pct = row['Period_Return'] * 100.0
+                        
+                        if sig == 'UP':
+                            gross_profit = capital * row['Period_Return']
+                            tax = gross_profit * 0.26 if gross_profit > 0 else 0.0
+                            net_profit = gross_profit - tax
+                            capital += net_profit
+                            alloc = capital
+                        else:
+                            alloc = 0.0
+                            net_profit = 0.0
+                            tax = 0.0
+                            
+                        cap_history.append(capital)
+                        tx_log.append({
+                            "Data": date_str, 
+                            "Segnale AI": sig, 
+                            "Allocazione (€)": f"{alloc:,.2f} €",
+                            "Variazione (%)": f"{var_pct:+.2f}%", 
+                            "Utile Netto (€)": f"{net_profit:+,.2f} €",
+                            "Tasse 26% (€)": f"{tax:,.2f} €", 
+                            "Capitale Finale (€)": f"{capital:,.2f} €"
+                        })
+                        
+                    df_plot = pd.DataFrame({'Date': df_res.index, 'Close': cap_history})
+                    final_val = cap_history[-1] if cap_history else init_cap
+                    tot_ret = ((final_val - init_cap) / init_cap) * 100.0
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Capitale Iniziale", f"{init_cap:,.2f} €")
+                    c2.metric(f"Valore Finale ({sel_asset})", f"{final_val:,.2f} €", f"{tot_ret:+.2f}%")
+                    c3.metric("Utile Netto Totale", f"{final_val - init_cap:+,.2f} €")
+                    
+                    st.markdown("---")
+                    st.subheader(f"📈 Evoluzione del Capitale — Strategia AI {sel_asset}")
+                    fig_t = go.Figure()
+                    fig_t.add_trace(go.Scatter(
+                        x=df_plot['Date'], y=df_plot['Close'], mode='lines', name="Capitale",
+                        line=dict(color='#2962FF', width=2.5)
+                    ))
+                    fig_t.update_layout(
+                        title=f"Andamento Capitale {sel_asset}",
+                        yaxis_title="Valore (€)", xaxis_title="Data", template="plotly_white", height=450
+                    )
+                    st.plotly_chart(fig_t, use_container_width=True)
+                    
+                    st.subheader("📋 Registro Dettagliato Transazioni")
+                    st.dataframe(pd.DataFrame(tx_log), use_container_width=True)
+                else:
+                    st.warning("⚠️ Dati storici non disponibili per l'ETF selezionato.")
