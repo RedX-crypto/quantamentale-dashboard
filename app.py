@@ -270,32 +270,30 @@ def load_crypto_indicators(crypto_code):
                 sma21_v = float(last["SMA 21"])
                 sma50_v = float(last["SMA 50"])
                 
-                predict_val = str(last.get("Predict", "UP")).strip().upper()
+                # Previsione AI
+                predict_val = str(last.get("Predict", "UP")).strip()
                 if predict_val == "UP":
                     prob_str = "68.5% (UP)" if crypto_code == "BTC" else "62.0% (UP)"
-                    is_down = False
                 elif predict_val == "DOWN":
                     prob_str = "54.0% (DOWN)"
-                    is_down = True
                 else:
                     prob_str = predict_val
-                    is_down = "DOWN" in predict_val
                     
                 df_res = pd.DataFrame({
                     "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
                     "Valore Ufficiale": [f"${price:,.2f}", f"{rsi_v:.2f}", f"{macd_v:+.2f}", f"${sma21_v:,.2f}", f"${sma50_v:,.2f}"]
                 })
-                return price, prob_str, is_down, df_res
+                return price, prob_str, df_res
         except Exception:
             pass
             
     if crypto_code == "BTC":
-        return 78262.72, "68.5% (UP)", False, pd.DataFrame({
+        return 78262.72, "68.5% (UP)", pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": ["$78,262.72", "52.25", "+858.29", "$71,629.61", "$76,541.20"]
         })
     else:
-        return 2274.53, "54.0% (DOWN)", True, pd.DataFrame({
+        return 2274.53, "54.0% (DOWN)", pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": ["$2,274.53", "48.65", "+14.13", "$2,126.59", "$2,356.59"]
         })
@@ -321,18 +319,17 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     c1, c2, c3, c4 = st.columns(4)
 
     best_up = df_all[df_all["Segnale"] == "UP"].iloc[0] if not df_all[df_all["Segnale"] == "UP"].empty else df_all.iloc[0]
-    c1.metric("🟢 Migliore UP", best_up["Paese"], delta=f"↑ {best_up['Esito AI']}", delta_color="normal")
+    c1.metric("🟢 Migliore UP", best_up["Paese"], best_up["Esito AI"])
 
     down_df = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
     best_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
-    # Forziamo il segno negativo prima della stringa per rendere il badge ROSSO
-    c2.metric("🔴 Migliore DOWN", best_down["Paese"], delta=f"- ↓ {best_down['Esito AI']}", delta_color="inverse")
+    c2.metric("🔴 Migliore DOWN", best_down["Paese"], best_down["Esito AI"])
 
     best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
-    c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], delta=f"↑ {best_mom['Mom_1M']}", delta_color="normal")
+    c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"])
 
     worst_mom = df_all.sort_values(by="Mom_1M_num", ascending=True).iloc[0]
-    c4.metric("📉 Peggiore del Mese (Prezzo)", worst_mom["Paese"], delta=f"- ↓ {worst_mom['Mom_1M']}", delta_color="inverse")
+    c4.metric("📉 Peggiore del Mese (Prezzo)", worst_mom["Paese"], worst_mom["Mom_1M"])
 
     st.markdown("---")
 
@@ -358,15 +355,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         
         m_col1, m_col2, m_col3 = st.columns(3)
         m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: ${p_end:,.2f}")
-        
-        is_etf_down = row_country["Segnale"] == "DOWN"
-        m_col2.metric(
-            label="Esito AI",
-            value=row_country['Esito AI'],
-            delta=f"- ↓ {row_country['Esito AI']}" if is_etf_down else f"↑ {row_country['Esito AI']}",
-            delta_color="inverse" if is_etf_down else "normal"
-        )
-        
+        m_col2.metric("Esito AI", row_country['Esito AI'])
         m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
         
         fig = go.Figure()
@@ -481,34 +470,24 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     st.title("₿ Analisi Crypto & Previsioni AI (BTC & ETH)")
     st.markdown("---")
     
+    # 1. Card Nome Crypto + Esito AI + Tabella Dati Essenziali per BTC ed ETH
     col_btc, col_eth = st.columns(2)
     
     with col_btc:
         st.markdown("### 🟡 Bitcoin (BTC)")
-        p_btc, pred_btc, is_down_btc, df_btc_ind = load_crypto_indicators("BTC")
-        
-        st.metric(
-            label="Bitcoin (BTC)",
-            value=f"${p_btc:,.2f}",
-            delta=f"- ↓ {pred_btc}" if is_down_btc else f"↑ {pred_btc}",
-            delta_color="inverse" if is_down_btc else "normal"
-        )
+        p_btc, pred_btc, df_btc_ind = load_crypto_indicators("BTC")
+        st.metric("Bitcoin (BTC)", f"${p_btc:,.2f}", f"Previsione AI: {pred_btc}")
         st.dataframe(df_btc_ind, use_container_width=True)
         
     with col_eth:
         st.markdown("### 🔷 Ethereum (ETH)")
-        p_eth, pred_eth, is_down_eth, df_eth_ind = load_crypto_indicators("ETH")
-        
-        st.metric(
-            label="Ethereum (ETH)",
-            value=f"${p_eth:,.2f}",
-            delta=f"- ↓ {pred_eth}" if is_down_eth else f"↑ {pred_eth}",
-            delta_color="inverse" if is_down_eth else "normal"
-        )
+        p_eth, pred_eth, df_eth_ind = load_crypto_indicators("ETH")
+        st.metric("Ethereum (ETH)", f"${p_eth:,.2f}", f"Previsione AI: {pred_eth}")
         st.dataframe(df_eth_ind, use_container_width=True)
         
     st.markdown("---")
     
+    # 2. Grafico Storico Settimanale Avanzato per Crypto con Frangente Temporale
     st.subheader("📈 Grafico Settimanale Avanzato Crypto")
     
     col_c1, col_c2, col_c3 = st.columns([2, 1, 1])
@@ -527,21 +506,14 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     df_crypto_chart = load_crypto_history(code_crypto)
     
     if df_crypto_chart is not None and not df_crypto_chart.empty:
-        df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_chart, horizon_crypto)
+        df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_crypto_chart if 'df_crypto_crypto_chart' in locals() else df_crypto_chart, horizon_crypto)
         
+        # Metriche sopra il grafico
         c_m1, c_m2 = st.columns(2)
         c_m1.metric(f"Performance Crypto ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
+        c_m2.metric("Previsione AI Ufficiale", pred_btc if code_crypto == "BTC" else pred_eth)
         
-        cur_pred = pred_btc if code_crypto == "BTC" else pred_eth
-        cur_is_down = is_down_btc if code_crypto == "BTC" else is_down_eth
-        
-        c_m2.metric(
-            label="Previsione AI Ufficiale",
-            value=cur_pred,
-            delta=f"- ↓ {cur_pred}" if cur_is_down else f"↑ {cur_pred}",
-            delta_color="inverse" if cur_is_down else "normal"
-        )
-        
+        # Costruzione Grafico Plotly Crypto
         fig_c = go.Figure()
         if chart_type_crypto == "Candele (Candlestick)" and 'Open' in df_c_filt.columns:
             fig_c.add_trace(go.Candlestick(
