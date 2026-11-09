@@ -359,24 +359,29 @@ def load_crypto_indicators(crypto_code):
     if db_file:
         try:
             df_c = pd.read_excel(db_file, sheet_name="Tecnica Crypto S").dropna(subset=["Crypto"])
-            sub = df_c[df_c["Crypto"] == crypto_code]
+            sub = df_c[df_c["Crypto"] == crypto_code].copy()
             
             if not sub.empty:
-                last = sub.iloc[-1]
-                predict_val = str(last.get("Predict", "")).strip()
+                # Ordina per data per prendere sempre la riga più recente
+                if 'Data' in sub.columns:
+                    sub['Data'] = pd.to_datetime(sub['Data'])
+                    sub = sub.sort_values(by='Data', ascending=False)
                 
-                if predict_val and predict_val != "nan":
-                    match = re.search(r'([\d\.,]+)', predict_val)
-                    if match:
-                        num_str = match.group(1).replace('.', '').replace(',', '.')
-                        try:
-                            prob_num = float(num_str)
-                        except ValueError:
-                            prob_num = 50.0
-                    else:
-                        prob_num = 60.0 if "UP" in predict_val.upper() else 40.0
-                        
-                    return prob_num, predict_val
+                # Cerca la prima riga con un Predict valido (non NaN)
+                for _, row in sub.iterrows():
+                    predict_val = str(row.get("Predict", "")).strip()
+                    if predict_val and predict_val != "nan":
+                        match = re.search(r'([\d\.,]+)', predict_val)
+                        if match:
+                            num_str = match.group(1).replace('.', '').replace(',', '.')
+                            try:
+                                prob_num = float(num_str)
+                            except ValueError:
+                                prob_num = 50.0
+                        else:
+                            prob_num = 60.0 if "UP" in predict_val.upper() else 40.0
+                            
+                        return prob_num, predict_val
         except Exception:
             pass
             
