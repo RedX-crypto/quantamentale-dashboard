@@ -185,9 +185,8 @@ def load_all_data():
 
     if db_file:
         try:
-            xls_temp = pd.ExcelFile(db_file)
-            target_sheet = "Forecast Week" if "Forecast Week" in xls_temp.sheet_names else ("Forecast Month" if "Forecast Month" in xls_temp.sheet_names else "Forecast")
-            df_fc = pd.read_excel(db_file, sheet_name=target_sheet)
+            # LETTURA RIGOROSA DAL FOGLIO MENSILE (Forecast Month)
+            df_fc = pd.read_excel(db_file, sheet_name="Forecast Month")
             
             if 'Data' in df_fc.columns:
                 df_fc['Data'] = pd.to_datetime(df_fc['Data'])
@@ -574,7 +573,6 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     st.title("₿ Quantamentale Crypto — Tripla Confluenza & AI")
     st.markdown("---")
     
-    # 1. Recupero Fear & Greed globale una sola volta
     global_fng = get_global_fear_and_greed()
     
     prob_num_btc, prob_str_btc = load_crypto_indicators("BTC")
