@@ -364,16 +364,18 @@ def load_crypto_indicators(crypto_code):
             if not sub.empty:
                 last = sub.iloc[-1]
                 predict_val = str(last.get("Predict", "")).strip()
-                prob_val = str(last.get("Prob_UP", "")).strip()
                 
-                if prob_val and prob_val != "nan":
-                    try:
-                        prob_num = float(prob_val.replace("%", "").strip())
-                    except ValueError:
-                        prob_num = 50.0
-                    return prob_num, f"{prob_val}% ({predict_val})"
-                elif predict_val and predict_val != "nan":
-                    prob_num = 60.0 if "UP" in predict_val.upper() else 40.0
+                if predict_val and predict_val != "nan":
+                    match = re.search(r'([\d\.,]+)', predict_val)
+                    if match:
+                        num_str = match.group(1).replace('.', '').replace(',', '.')
+                        try:
+                            prob_num = float(num_str)
+                        except ValueError:
+                            prob_num = 50.0
+                    else:
+                        prob_num = 60.0 if "UP" in predict_val.upper() else 40.0
+                        
                     return prob_num, predict_val
         except Exception:
             pass
