@@ -185,12 +185,29 @@ def load_all_data():
 
     if db_file:
         try:
-            df_fc = pd.read_excel(db_file, sheet_name="Forecast")
-            for _, row in df_fc.dropna(subset=['Country', 'Forecast']).iterrows():
+            xls_temp = pd.ExcelFile(db_file)
+            target_sheet = "Forecast Week" if "Forecast Week" in xls_temp.sheet_names else ("Forecast Month" if "Forecast Month" in xls_temp.sheet_names else "Forecast")
+            df_fc = pd.read_excel(db_file, sheet_name=target_sheet)
+            
+            if 'Data' in df_fc.columns:
+                df_fc['Data'] = pd.to_datetime(df_fc['Data'])
+                latest_date = df_fc['Data'].max()
+                df_fc = df_fc[df_fc['Data'] == latest_date]
+
+            for _, row in df_fc.dropna(subset=['Country', 'Previsione']).iterrows():
                 paese = str(row['Country']).strip()
-                fc_str = str(row['Forecast']).strip()
-                match = re.search(r'([\d\.]+)', fc_str)
-                prob = float(match.group(1)) if match else 50.0
+                fc_str = str(row['Previsione']).strip()
+                
+                match = re.search(r'([\d\.,]+)', fc_str)
+                if match:
+                    num_str = match.group(1).replace('.', '').replace(',', '.')
+                    try:
+                        prob = float(num_str)
+                    except ValueError:
+                        prob = 50.0
+                else:
+                    prob = 50.0
+                    
                 segnal = "DOWN" if "DOWN" in fc_str.upper() else "UP"
                 
                 meta = meta_etfs.get(paese, {"Ticker_YF": "SPY", "Sheet_ETF": paese})
@@ -632,7 +649,6 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     if df_crypto_chart is not None and not df_crypto_chart.empty:
         df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_chart, horizon_crypto)
         
-        # Tre metriche in alto sopra il grafico: Performance, Previsione AI e Fear & Greed Index unico
         c_m1, c_m2, c_m3 = st.columns(3)
         c_m1.metric(f"Performance ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
         c_m2.metric("Previsione AI Ufficiale (DB)", prob_str_btc if code_crypto == "BTC" else prob_str_eth)
