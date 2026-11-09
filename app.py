@@ -352,7 +352,7 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
     except Exception:
         return None
 
-@st.cache_data
+# SENZA CACHE per leggere sempre i dati aggiornati dal foglio Excel
 def load_crypto_indicators(crypto_code):
     db_file = find_excel_file("DataBase.xlsx")
     
@@ -362,12 +362,10 @@ def load_crypto_indicators(crypto_code):
             sub = df_c[df_c["Crypto"] == crypto_code].copy()
             
             if not sub.empty:
-                # Ordina per data per prendere sempre la riga più recente
                 if 'Data' in sub.columns:
                     sub['Data'] = pd.to_datetime(sub['Data'])
                     sub = sub.sort_values(by='Data', ascending=False)
                 
-                # Cerca la prima riga con un Predict valido (non NaN)
                 for _, row in sub.iterrows():
                     predict_val = str(row.get("Predict", "")).strip()
                     if predict_val and predict_val != "nan":
