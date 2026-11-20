@@ -21,6 +21,7 @@ modulo = st.sidebar.radio(
     [
         "🏆 Rotazione ETF & Grafici Dettagliati", 
         "🔄 Correlazione ETF",
+        "💼 Portafoglio / Paper Trading",
         "₿ Crypto (BTC & ETH)"
     ]
 )
@@ -717,7 +718,268 @@ elif modulo == "🔄 Correlazione ETF":
         st.info("Seleziona almeno 2 Paesi/ETF per generare la matrice di correlazione.")
 
 # =============================================================================
-# PAGINA 3: CRYPTO (BTC & ETH DETTAGLIATO + TRIPLA CONFLUENZA AUTOMATICA)
+# PAGINA 3: PORTAFOGLIO / PAPER TRADING AVANZATO
+# =============================================================================
+elif modulo == "💼 Portafoglio / Paper Trading":
+    st.title("💼 Portafoglio Simulato & Paper Trading")
+    st.markdown("---")
+    st.write("Componi un portafoglio fittizio combinando ETF Paese e Crypto per stimare correlazione complessiva, spinta statistica AI e profilo di rischio.")
+
+    # 1. Capitale simulato e orizzonte di analisi
+    c_top1, c_top2 = st.columns([1.5, 2.5])
+    capitale_totale = c_top1.number_input("Capitale Simulato (€):", min_value=100, max_value=1000000, value=1000, step=100)
+    orizzonte_ptf = c_top2.radio(
+        "Finestra Storica per Rischio & Correlazione:",
+        ["3 Mesi (63g)", "6 Mesi (126g)", "1 Anno (252g)", "3 Anni (756g)"],
+        index=2,
+        horizontal=True
+    )
+    map_days_ptf = {
+        "3 Mesi (63g)": 63,
+        "6 Mesi (126g)": 126,
+        "1 Anno (252g)": 252,
+        "3 Anni (756g)": 756
+    }
+    days_ptf = map_days_ptf[orizzonte_ptf]
+
+    st.markdown("---")
+    st.subheader("🧩 1. Selezione Asset & Allocazione Pesi (%)")
+
+    # Prepara catalogo unificato (ETF da df_all + Crypto)
+    paesi_list = df_all["Paese"].tolist()
+    opzioni_asset = [f"ETF: {p}" for p in paesi_list] + ["Crypto: BTC", "Crypto: ETH"]
+
+    default_ptf = []
+    for p_def in ["USA", "Germania", "India"]:
+        if p_def in paesi_list:
+            default_ptf.append(f"ETF: {p_def}")
+    default_ptf.append("Crypto: BTC")
+
+    asset_scelti = st.multiselect(
+        "Scegli gli asset da inserire in portafoglio:",
+        options=opzioni_asset,
+        default=default_ptf
+    )
+
+    if len(asset_scelti) < 2:
+        st.info("Seleziona almeno 2 asset per calcolare correlazione e metriche di portafoglio.")
+    else:
+        st.write("Imposta i pesi percentuali per ciascun asset (la somma deve essere **100%**):")
+        pesi_dict = {}
+        cols_w = st.columns(min(4, len(asset_scelti)))
+        peso_iniziale = int(100 // len(asset_scelti))
+        resto = 100 - (peso_iniziale * len(asset_scelti))
+
+        for idx, asset_label in enumerate(asset_scelti):
+            col_curr = cols_w[idx % len(cols_w)]
+            val_def = peso_iniziale + (resto if idx == 0 else 0)
+            pesi_dict[asset_label] = col_curr.number_input(
+                f"{asset_label} (%)",
+                min_value=0,
+                max_value=100,
+                value=val_def,
+                step=5,
+                key=f"peso_{asset_label}"
+            )
+
+        somma_pesi = sum(pesi_dict.values())
+
+        if somma_pesi != 100:
+            st.error(f"⚠️ La somma attuale dei pesi è **{somma_pesi}%**. Regola i valori affinché il totale sia esattamente **100%**.")
+        else:
+            # Raccolta probabilità AI, segnali e serie storiche dei rendimenti
+            prob_num_btc, prob_str_btc = load_crypto_indicators("BTC")
+            prob_num_eth, prob_str_eth = load_crypto_indicators("ETH")
+
+            returns_map = {}
+            dettagli_righe = []
+            quota_crypto = 0.0
+            prob_up_ponderata = 0.0
+
+            for asset_label, w_pct in pesi_dict.items():
+                w = w_pct / 100.0
+                if w == 0:
+                    continue
+
+                if asset_label.startswith("ETF: "):
+                    paese_nome = asset_label.replace("ETF: ", "")
+                    r_row = df_all[df_all["Paese"] == paese_nome].iloc[0]
+                    ticker_curr = r_row["Ticker_YF"]
+                    segnale_curr = r_row["Segnale"]
+                    prob_raw = float(r_row["Prob_UP"])
+                    # Probabilità direzionale UP (se il segnale è DOWN, la prob di salita è 100 - prob_raw)
+                    prob_up_eff = prob_raw if segnale_curr == "UP" else (100.0 - prob_raw)
+                    stato_curr = r_row["Stato OOS"]
+
+                    hist_df = load_etf_history(ticker_curr)
+                    if hist_df is not None and not hist_df.empty:
+                        s_ret = hist_df.sort_values("Date").set_index("Date")["Close"].pct_change().dropna().tail(days_ptf)
+                        returns_map[asset_label] = s_ret
+
+                else:
+                    crypto_code = asset_label.replace("Crypto: ", "")
+                    quota_crypto += w_pct
+                    ticker_curr = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
+                    prob_raw = prob_num_btc if crypto_code == "BTC" else prob_num_eth
+                    prob_str_c = prob_str_btc if crypto_code == "BTC" else prob_str_eth
+                    segnale_curr = "DOWN" if "DOWN" in prob_str_c.upper() else ("UP" if "UP" in prob_str_c.upper() else "NEUTRO")
+
+                    if prob_raw > 0:
+                        prob_up_eff = prob_raw if segnale_curr == "UP" else (100.0 - prob_raw if segnale_curr == "DOWN" else 50.0)
+                    else:
+                        prob_up_eff = 50.0
+                    stato_curr = "Settimanale"
+
+                    # Per allineare su base giornaliera con gli ETF scarichiamo history giornaliero
+                    if yf is not None:
+                        try:
+                            df_c_daily = yf.Ticker(ticker_curr).history(period="5y")
+                            if not df_c_daily.empty:
+                                df_c_daily = df_c_daily.reset_index()
+                                d_col = [c for c in df_c_daily.columns if "date" in c.lower()][0]
+                                df_c_daily[d_col] = strip_timezone(df_c_daily[d_col])
+                                s_ret = df_c_daily.sort_values(d_col).set_index(d_col)["Close"].pct_change().dropna().tail(days_ptf)
+                                returns_map[asset_label] = s_ret
+                        except Exception:
+                            pass
+
+                prob_up_ponderata += w * prob_up_eff
+                dettagli_righe.append({
+                    "Asset": asset_label,
+                    "Ticker": ticker_curr,
+                    "Peso": f"{w_pct}%",
+                    "Importo (€)": round(capitale_totale * w, 2),
+                    "Segnale AI": segnale_curr,
+                    "Prob. Rialzo Stimata": f"{prob_up_eff:.1f}%",
+                    "Note / Filtro": stato_curr
+                })
+
+            # Calcolo matrice di correlazione, correlazione media ponderata e volatilità di portafoglio
+            corr_media_ptf = 0.0
+            vol_annua_ptf = 0.0
+            corr_mat_ptf = None
+
+            valid_assets = [k for k in returns_map.keys() if pesi_dict[k] > 0]
+            if len(valid_assets) >= 2:
+                df_rets_ptf = pd.DataFrame({k: returns_map[k] for k in valid_assets}).dropna()
+                if len(df_rets_ptf) > 15:
+                    w_vec = np.array([pesi_dict[k] / 100.0 for k in valid_assets])
+                    w_vec = w_vec / w_vec.sum()
+
+                    corr_mat_ptf = df_rets_ptf.corr()
+                    cov_mat_ann = df_rets_ptf.cov() * 252.0
+
+                    # Volatilità annualizzata del portafoglio: sqrt(w^T * Cov * w)
+                    vol_annua_ptf = float(np.sqrt(np.dot(w_vec.T, np.dot(cov_mat_ann.values, w_vec)))) * 100.0
+
+                    # Correlazione media ponderata tra coppie distinte
+                    num_corr = 0.0
+                    den_corr = 0.0
+                    for i in range(len(valid_assets)):
+                        for j in range(i + 1, len(valid_assets)):
+                            wij = w_vec[i] * w_vec[j]
+                            num_corr += wij * corr_mat_ptf.iloc[i, j]
+                            den_corr += wij
+                    corr_media_ptf = float(num_corr / den_corr) if den_corr > 0 else 0.0
+
+            # Classificazione Profilo di Rischio Stimato
+            if vol_annua_ptf >= 28.0 or quota_crypto >= 35.0:
+                profilo_rischio = "🔴 Aggressivo"
+                desc_rischio = "Alta volatilità / forte esposizione crypto"
+            elif vol_annua_ptf >= 18.0 or quota_crypto >= 15.0:
+                profilo_rischio = "🟠 Dinamico"
+                desc_rischio = "Crescita con oscillazioni marcate"
+            elif vol_annua_ptf >= 11.0:
+                profilo_rischio = "🟡 Bilanciato / Moderato"
+                desc_rischio = "Buon equilibrio rischio/diversificazione"
+            else:
+                profilo_rischio = "🟢 Conservativo"
+                desc_rischio = "Bassa volatilità storica"
+
+            st.markdown("---")
+            st.subheader("📊 2. Metriche Sintetiche di Portafoglio")
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric(
+                "Correlazione Complessiva",
+                f"{corr_media_ptf:.2f}",
+                "Ben diversificato" if corr_media_ptf < 0.45 else ("Moderata" if corr_media_ptf < 0.70 else "Alta concentrazione")
+            )
+            m2.metric(
+                "Prob. Media Ponderata UP",
+                f"{prob_up_ponderata:.1f}%",
+                "Spinta rialzista" if prob_up_ponderata >= 55.0 else "Cautela / Difensivo"
+            )
+            m3.metric(
+                "Profilo di Rischio",
+                profilo_rischio,
+                f"Volatilità annua: {vol_annua_ptf:.1f}%"
+            )
+            m4.metric(
+                "Esposizione Crypto",
+                f"{quota_crypto:.0f}%",
+                desc_rischio,
+                delta_color="off"
+            )
+
+            # Avviso se ci sono asset esclusi OOS dentro il portafoglio simulato
+            esclusi_in_ptf = [r["Asset"] for r in dettagli_righe if "Escluso" in str(r["Note / Filtro"])]
+            if esclusi_in_ptf:
+                st.warning(
+                    f"⚠️ **Nota Filtro OOS:** Hai inserito asset esclusi per bassa accuratezza storica ({', '.join(esclusi_in_ptf)}). "
+                    "Valuta se ridurne il peso o sostituirli con paesi validati."
+                )
+
+            st.markdown("---")
+            st.subheader("📋 3. Riepilogo Allocazione & Grafici")
+
+            col_tab, col_pie = st.columns([1.6, 1])
+            df_dettagli = pd.DataFrame(dettagli_righe)
+            df_dettagli.index = range(1, len(df_dettagli) + 1)
+            col_tab.dataframe(df_dettagli, use_container_width=True)
+
+            fig_pie = go.Figure(data=[go.Pie(
+                labels=df_dettagli["Asset"],
+                values=[pesi_dict[a] for a in df_dettagli["Asset"]],
+                hole=0.45,
+                textinfo="label+percent"
+            )])
+            fig_pie.update_layout(
+                title=dict(text="<b>Ripartizione Portafoglio</b>", font=dict(size=14)),
+                template="plotly_white",
+                height=340,
+                margin=dict(l=10, r=10, t=40, b=10),
+                showlegend=False
+            )
+            col_pie.plotly_chart(fig_pie, use_container_width=True)
+
+            # Grafico storico simulato del portafoglio (Base 100)
+            if len(valid_assets) >= 2 and 'df_rets_ptf' in locals() and not df_rets_ptf.empty:
+                ptf_daily_ret = df_rets_ptf.dot(w_vec)
+                ptf_equity = (1.0 + ptf_daily_ret).cumprod() * 100.0
+
+                fig_eq = go.Figure()
+                fig_eq.add_trace(go.Scatter(
+                    x=ptf_equity.index,
+                    y=ptf_equity.values,
+                    mode="lines",
+                    name="Portafoglio Simulato",
+                    line=dict(color="#1F4E78", width=2.5)
+                ))
+                fig_eq.update_layout(
+                    title=dict(text=f"<b>Andamento Storico Simulato del Portafoglio (Base 100 — {orizzonte_ptf})</b>", font=dict(size=15)),
+                    yaxis_title="Valore Portafoglio (Base 100)",
+                    xaxis_title="Data",
+                    template="plotly_white",
+                    height=380,
+                    margin=dict(l=30, r=30, t=45, b=30),
+                    xaxis=dict(showgrid=True, gridcolor="#F0F2F5", type="date"),
+                    yaxis=dict(showgrid=True, gridcolor="#F0F2F5")
+                )
+                st.plotly_chart(fig_eq, use_container_width=True)
+
+# =============================================================================
+# PAGINA 4: CRYPTO (BTC & ETH DETTAGLIATO + TRIPLA CONFLUENZA AUTOMATICA)
 # =============================================================================
 elif modulo == "₿ Crypto (BTC & ETH)":
     st.title("₿ Quantamentale Crypto — Tripla Confluenza & AI")
