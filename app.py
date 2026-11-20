@@ -491,34 +491,81 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 # PAGINA 2: CORRELAZIONE ETF
 # =============================================================================
 elif modulo == "🔄 Correlazione ETF":
-    st.title("🔄 Calcolatore di Correlazione tra 2 ETF Paese")
+    st.title("🔄 Correlazione & Diversificazione ETF")
     st.markdown("---")
-    
-    st.write("Seleziona due Paesi per confrontare le loro metriche e analizzare la correlazione storica dei relativi ETF.")
-    
-    col1, col2 = st.columns(2)
-    country1 = col1.selectbox("Seleziona Primo Paese:", df_all["Paese"].tolist(), index=0)
-    country2 = col2.selectbox("Seleziona Secondo Paese:", df_all["Paese"].tolist(), index=1 if len(df_all) > 1 else 0)
-    
+
+    # --- 1. CONFRONTO A 2 PAESI + ROLLING CORRELATION + ALERT ---
+    st.subheader("⚖️ Confronto Diretto & Finestra Mobile (Rolling Correlation)")
+    st.write("Seleziona due Paesi e una finestra temporale per analizzare correlazione, cambi di regime e rischio di concentrazione.")
+
+    col1, col2, col_win = st.columns([2, 2, 1.5])
+    paesi_disponibili = df_all["Paese"].tolist()
+    country1 = col1.selectbox("Seleziona Primo Paese:", paesi_disponibili, index=0)
+    country2 = col2.selectbox("Seleziona Secondo Paese:", paesi_disponibili, index=1 if len(paesi_disponibili) > 1 else 0)
+
+    finestre_giorni = {
+        "30 Giorni": 30,
+        "3 Mesi (63g)": 63,
+        "6 Mesi (126g)": 126,
+        "1 Anno (252g)": 252,
+        "Tutto lo Storico": None
+    }
+    scelta_finestra = col_win.selectbox("Finestra Analisi / Rolling:", list(finestre_giorni.keys()), index=1)
+    win_days = finestre_giorni[scelta_finestra]
+
+    soglia_over = st.slider("Soglia Alert Over-Concentrazione:", min_value=0.60, max_value=0.95, value=0.85, step=0.05)
+
     row1 = df_all[df_all["Paese"] == country1].iloc[0]
     row2 = df_all[df_all["Paese"] == country2].iloc[0]
-    
+
     df_h1 = load_etf_history(row1["Ticker_YF"])
     df_h2 = load_etf_history(row2["Ticker_YF"])
-    
+
     corr_val = 0.0
+    corr_3m_check = None
     df_merged = None
-    
+    rolling_series = None
+
     if df_h1 is not None and df_h2 is not None and not df_h1.empty and not df_h2.empty:
-        df_merged = pd.merge(df_h1[['Date', 'Close']], df_h2[['Date', 'Close']], on='Date', suffixes=(f'_{country1}', f'_{country2}')).dropna()
-        if len(df_merged) > 10:
-            ret1 = df_merged[f'Close_{country1}'].pct_change().dropna()
-            ret2 = df_merged[f'Close_{country2}'].pct_change().dropna()
-            corr_val = ret1.corr(ret2)
-            
-    st.markdown("---")
-    st.subheader("📊 Indice di Correlazione Storica")
-    
+        df_merged = pd.merge(
+            df_h1[['Date', 'Close']],
+            df_h2[['Date', 'Close']],
+            on='Date',
+            suffixes=(f'_{country1}', f'_{country2}')
+        ).sort_values('Date').dropna()
+
+        if len(df_merged) > 15:
+            ret1 = df_merged[f'Close_{country1}'].pct_change()
+            ret2 = df_merged[f'Close_{country2}'].pct_change()
+            rets_df = pd.DataFrame({'Date': df_merged['Date'], 'r1': ret1, 'r2': ret2}).dropna()
+
+            # Controllo specifico a ~3 mesi (63 giorni) per l'alert di concentrazione
+            if len(rets_df) >= 63:
+                corr_3m_check = float(rets_df['r1'].tail(63).corr(rets_df['r2'].tail(63)))
+
+            if win_days is not None and len(rets_df) >= win_days:
+                sub_rets = rets_df.tail(win_days)
+                corr_val = float(sub_rets['r1'].corr(sub_rets['r2']))
+            else:
+                corr_val = float(rets_df['r1'].corr(rets_df['r2']))
+
+            roll_win = win_days if win_days is not None else min(63, max(15, len(rets_df) // 4))
+            if len(rets_df) > roll_win:
+                rolling_series = pd.DataFrame({
+                    'Date': rets_df['Date'],
+                    'Rolling_Corr': rets_df['r1'].rolling(window=roll_win).corr(rets_df['r2'])
+                }).dropna()
+
+    # Alert di Over-Concentrazione
+    val_da_controllare = corr_3m_check if corr_3m_check is not None else corr_val
+    if country1 != country2 and val_da_controllare is not None and val_da_controllare > soglia_over:
+        st.warning(
+            f"⚠️ **Attenzione: stai duplicando il rischio geografico/fattoriale.** "
+            f"La correlazione tra **{country1}** e **{country2}** è **{val_da_controllare:.2f}** "
+            f"(sopra la soglia critica di {soglia_over:.2f})."
+        )
+
+    st.subheader("📊 Indice di Correlazione")
     if corr_val > 0.7:
         corr_label = "Forte Correlazione Positiva 🔴 (Muovono insieme)"
     elif corr_val > 0.3:
@@ -527,49 +574,147 @@ elif modulo == "🔄 Correlazione ETF":
         corr_label = "Decorrelati 🟢 (Ottimi per Diversificare)"
     else:
         corr_label = "Correlazione Inversa 🔵 (Muovono in direzioni opposte)"
-        
+
     st.metric(
-        label=f"Coefficiente di Correlazione ({country1} vs {country2})",
+        label=f"Correlazione ({country1} vs {country2}) — {scelta_finestra}",
         value=f"{corr_val:.2f}",
         delta=corr_label,
         delta_color="off"
     )
-    
+
+    if rolling_series is not None and not rolling_series.empty:
+        fig_roll = go.Figure()
+        fig_roll.add_trace(go.Scatter(
+            x=rolling_series['Date'],
+            y=rolling_series['Rolling_Corr'],
+            mode='lines',
+            name=f"Rolling Corr ({scelta_finestra})",
+            line=dict(color='#7B1FA2', width=2)
+        ))
+        fig_roll.add_hline(y=soglia_over, line_dash="dash", line_color="#ef5350", annotation_text=f"Soglia {soglia_over:.2f}")
+        fig_roll.add_hline(y=0, line_dash="dot", line_color="#888888")
+        fig_roll.update_layout(
+            title=dict(text=f"<b>Rolling Correlation nel Tempo: {country1} vs {country2}</b>", font=dict(size=15)),
+            yaxis_title="Correlazione",
+            yaxis=dict(range=[-1.05, 1.05], showgrid=True, gridcolor='#F0F2F5'),
+            xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
+            template="plotly_white",
+            height=340,
+            margin=dict(l=30, r=30, t=45, b=30)
+        )
+        st.plotly_chart(fig_roll, use_container_width=True)
+
     st.markdown("---")
     st.subheader("📋 Confronto Diretto Metriche")
     df_comp = pd.DataFrame([row1, row2])[["Paese", "Esito AI", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]]
     df_comp.index = range(1, len(df_comp) + 1)
     st.dataframe(df_comp, use_container_width=True)
-    
+
     st.markdown("---")
     st.subheader("📈 Grafico Comparativo dei Prezzi (Base 100)")
-    
+
     if df_merged is not None and not df_merged.empty:
+        df_plot_base = df_merged.tail(win_days).copy() if (win_days is not None and len(df_merged) >= win_days) else df_merged.copy()
         p1_col = f'Close_{country1}'
         p2_col = f'Close_{country2}'
-        
-        df_merged['Norm1'] = (df_merged[p1_col] / df_merged[p1_col].iloc[0]) * 100
-        df_merged['Norm2'] = (df_merged[p2_col] / df_merged[p2_col].iloc[0]) * 100
-        
+
+        df_plot_base['Norm1'] = (df_plot_base[p1_col] / df_plot_base[p1_col].iloc[0]) * 100
+        df_plot_base['Norm2'] = (df_plot_base[p2_col] / df_plot_base[p2_col].iloc[0]) * 100
+
         fig_corr = go.Figure()
         fig_corr.add_trace(go.Scatter(
-            x=df_merged['Date'], y=df_merged['Norm1'], mode='lines',
+            x=df_plot_base['Date'], y=df_plot_base['Norm1'], mode='lines',
             name=f"{country1} ({row1['Ticker_YF']})", line=dict(color='#2962FF', width=2)
         ))
         fig_corr.add_trace(go.Scatter(
-            x=df_merged['Date'], y=df_merged['Norm2'], mode='lines',
+            x=df_plot_base['Date'], y=df_plot_base['Norm2'], mode='lines',
             name=f"{country2} ({row2['Ticker_YF']})", line=dict(color='#FF6D00', width=2)
         ))
-        
+
         fig_corr.update_layout(
-            title=dict(text=f"<b>Andamento Storico Comparativo (Base 100 = Inizio): {country1} vs {country2}</b>", font=dict(size=16)),
-            yaxis_title="Valore Normalizzato (Base 100)", xaxis_title="Data", template="plotly_white", height=500,
+            title=dict(text=f"<b>Andamento Comparativo (Base 100): {country1} vs {country2}</b>", font=dict(size=16)),
+            yaxis_title="Valore Normalizzato (Base 100)", xaxis_title="Data", template="plotly_white", height=460,
             margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
             yaxis=dict(showgrid=True, gridcolor='#F0F2F5'), showlegend=True
         )
         st.plotly_chart(fig_corr, use_container_width=True)
     else:
         st.warning("⚠️ Dati storici insufficienti per generare il grafico comparativo.")
+
+    # --- 2. MATRICE DI CORRELAZIONE DINAMICA (HEATMAP PANIERE) ---
+    st.markdown("---")
+    st.subheader("🗺️ Matrice di Correlazione Dinamica (Heatmap Paniere)")
+    st.write("Seleziona da 2 a 10 ETF/Paesi per visualizzare la matrice delle correlazioni sui rendimenti nella finestra scelta.")
+
+    default_basket = [p for p in ["USA", "Germania", "Giappone", "India", "Brasile", "Regno unito"] if p in paesi_disponibili]
+    if not default_basket:
+        default_basket = paesi_disponibili[:min(6, len(paesi_disponibili))]
+
+    selected_basket = st.multiselect(
+        "Paniere Asset (max 10 consigliati):",
+        options=paesi_disponibili,
+        default=default_basket,
+        max_selections=10
+    )
+
+    if len(selected_basket) >= 2:
+        returns_dict = {}
+        for p in selected_basket:
+            r_info = df_all[df_all["Paese"] == p].iloc[0]
+            h_df = load_etf_history(r_info["Ticker_YF"])
+            if h_df is not None and not h_df.empty:
+                s_close = h_df.sort_values('Date').set_index('Date')['Close'].pct_change()
+                if win_days is not None:
+                    s_close = s_close.tail(win_days)
+                returns_dict[p] = s_close
+
+        if len(returns_dict) >= 2:
+            df_basket_rets = pd.DataFrame(returns_dict).dropna(how='all')
+            corr_matrix = df_basket_rets.corr()
+
+            # Controllo coppie sopra soglia nella matrice
+            high_pairs = []
+            cols_m = corr_matrix.columns.tolist()
+            for i in range(len(cols_m)):
+                for j in range(i + 1, len(cols_m)):
+                    v = corr_matrix.iloc[i, j]
+                    if pd.notna(v) and v > soglia_over:
+                        high_pairs.append(f"{cols_m[i]} – {cols_m[j]} ({v:.2f})")
+
+            if high_pairs:
+                st.warning(
+                    f"⚠️ **Over-Concentrazione rilevata nel paniere (>{soglia_over:.2f}):** "
+                    + ", ".join(high_pairs)
+                )
+
+            fig_heat = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=corr_matrix.columns,
+                y=corr_matrix.index,
+                zmin=-1,
+                zmax=1,
+                colorscale=[
+                    [0.0, "#d32f2f"],   # Rosso per correlazione negativa forte
+                    [0.5, "#f5f5f5"],   # Neutro vicino a 0
+                    [1.0, "#2e7d32"]    # Verde per correlazione positiva forte
+                ],
+                text=np.round(corr_matrix.values, 2),
+                texttemplate="%{text}",
+                textfont={"size": 11},
+                hovertemplate="<b>%{y}</b> vs <b>%{x}</b><br>Correlazione: %{z:.2f}<extra></extra>"
+            ))
+
+            fig_heat.update_layout(
+                title=dict(text=f"<b>Heatmap Correlazioni ({scelta_finestra})</b>", font=dict(size=16)),
+                template="plotly_white",
+                height=520,
+                margin=dict(l=40, r=30, t=55, b=40)
+            )
+            st.plotly_chart(fig_heat, use_container_width=True)
+        else:
+            st.info("Dati storici insufficienti per calcolare la matrice del paniere selezionato.")
+    else:
+        st.info("Seleziona almeno 2 Paesi/ETF per generare la matrice di correlazione.")
 
 # =============================================================================
 # PAGINA 3: CRYPTO (BTC & ETH DETTAGLIATO + TRIPLA CONFLUENZA AUTOMATICA)
