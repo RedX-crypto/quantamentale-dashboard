@@ -958,14 +958,43 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 ptf_daily_ret = df_rets_ptf.dot(w_vec)
                 ptf_equity = (1.0 + ptf_daily_ret).cumprod() * 100.0
 
+                val_iniziale = float(ptf_equity.iloc[0])
+                val_finale = float(ptf_equity.iloc[-1])
+                perf_pct = ((val_finale - val_iniziale) / val_iniziale) * 100.0 if val_iniziale > 0 else 0.0
+                capitale_finale = capitale_totale * (val_finale / val_iniziale) if val_iniziale > 0 else capitale_totale
+                pnl_euro = capitale_finale - capitale_totale
+
+                st.markdown("---")
+                st.subheader(f"📈 4. Performance Storica Simulata ({orizzonte_ptf})")
+
+                p_col1, p_col2, p_col3 = st.columns(3)
+                p_col1.metric(
+                    f"Profitto / Perdita ({orizzonte_ptf})",
+                    f"{perf_pct:+.2f}%",
+                    f"{pnl_euro:+,.2f} €"
+                )
+                p_col2.metric(
+                    "Capitale Iniziale Simulato",
+                    f"{capitale_totale:,.2f} €",
+                    f"Base: {val_iniziale:.1f}",
+                    delta_color="off"
+                )
+                p_col3.metric(
+                    "Controvalore Finale Simulato",
+                    f"{capitale_finale:,.2f} €",
+                    f"Indice finale: {val_finale:.2f}",
+                    delta_color="off"
+                )
+
                 fig_eq = go.Figure()
                 fig_eq.add_trace(go.Scatter(
                     x=ptf_equity.index,
                     y=ptf_equity.values,
                     mode="lines",
                     name="Portafoglio Simulato",
-                    line=dict(color="#1F4E78", width=2.5)
+                    line=dict(color="#2e7d32" if perf_pct >= 0 else "#d32f2f", width=2.5)
                 ))
+                fig_eq.add_hline(y=100.0, line_dash="dot", line_color="#888888", annotation_text="Base 100")
                 fig_eq.update_layout(
                     title=dict(text=f"<b>Andamento Storico Simulato del Portafoglio (Base 100 — {orizzonte_ptf})</b>", font=dict(size=15)),
                     yaxis_title="Valore Portafoglio (Base 100)",
