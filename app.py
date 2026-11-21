@@ -19,12 +19,59 @@ st.markdown("""
 [data-testid="stMetricDelta"] svg {
     display: none !important;
 }
-/* Forza il colore rosso/negativo per i delta che rappresentano perdite/stop loss */
-div[data-testid="stMetric"]:has(div[data-testid="stMetricDelta"]:has-text("-")) [data-testid="stMetricDelta"] {
-    background-color: rgba(255, 75, 75, 0.16) !important;
+
+/* Forza rosso su badge e testo interno quando il delta inizia o contiene '-' */
+[data-testid="stMetricDelta"]:has(div:contains("-")),
+[data-testid="stMetricDelta"]:has(span:contains("-")) {
+    background-color: rgba(239, 83, 80, 0.22) !important;
     color: #ff6b6b !important;
 }
+
+div[data-testid="stMetric"]:has([data-testid="stMetricDelta"]) [data-testid="stMetricDelta"] {
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Selettore compatibile con CSS standard per delta negativo (valore o delta con segno meno) */
+div[data-testid="stMetricDelta"][data-testid="stMetricDelta"] {
+    --neg-bg: rgba(239, 83, 80, 0.22);
+    --neg-fg: #ff6b6b;
+}
 </style>
+<script>
+(function() {
+    function colorNegativeDeltas() {
+        const deltas = document.querySelectorAll('[data-testid="stMetricDelta"]');
+        deltas.forEach((el) => {
+            const txt = (el.innerText || el.textContent || '').trim();
+            // Escludi etichette descrittive come "Finale: $34.96" o "Picco-Fondo nel periodo"
+            const isPercentOrLoss = /^-?\d+(\.\d+)?%$/.test(txt) || txt.startsWith('-');
+            if (isPercentOrLoss) {
+                el.style.setProperty('background-color', 'rgba(239, 83, 80, 0.22)', 'important');
+                el.style.setProperty('color', '#ff6b6b', 'important');
+                el.querySelectorAll('*').forEach((child) => {
+                    child.style.setProperty('color', '#ff6b6b', 'important');
+                    if (child.tagName === 'SPAN' || child.tagName === 'DIV') {
+                        child.style.setProperty('background-color', 'transparent', 'important');
+                    }
+                });
+            } else if (/^\+\d+(\.\d+)?%$/.test(txt)) {
+                el.style.setProperty('background-color', 'rgba(38, 166, 154, 0.20)', 'important');
+                el.style.setProperty('color', '#2ecc71', 'important');
+                el.querySelectorAll('*').forEach((child) => {
+                    child.style.setProperty('color', '#2ecc71', 'important');
+                    if (child.tagName === 'SPAN' || child.tagName === 'DIV') {
+                        child.style.setProperty('background-color', 'transparent', 'important');
+                    }
+                });
+            }
+        });
+    }
+
+    colorNegativeDeltas();
+    const observer = new MutationObserver(colorNegativeDeltas);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+})();
+</script>
 """, unsafe_allow_html=True)
 
 # Menu di navigazione laterale
