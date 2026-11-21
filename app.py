@@ -450,7 +450,12 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"])
 
     worst_mom = df_all.sort_values(by="Mom_1M_num", ascending=True).iloc[0]
-    c4.metric("📉 Peggiore del Mese (Prezzo)", worst_mom["Paese"], worst_mom["Mom_1M"])
+    c4.metric(
+        "📉 Peggiore del Mese (Prezzo)",
+        worst_mom["Paese"],
+        worst_mom["Mom_1M"],
+        delta_color="inverse" if worst_mom["Mom_1M_num"] < 0 else "normal"
+    )
 
     st.markdown("---")
 
@@ -479,9 +484,16 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 
         stop_loss_price = p_end * (1.0 - max(0.03, vol_monthly * 1.2))
         take_profit_price = p_end * (1.0 + max(0.06, vol_monthly * 2.0))
+        sl_dist_pct = ((p_end - stop_loss_price) / p_end) * 100.0 if p_end > 0 else 0.0
+        tp_dist_pct = ((take_profit_price - p_end) / p_end) * 100.0 if p_end > 0 else 0.0
 
         m_col1, m_col2, m_col3 = st.columns(3)
-        m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: ${p_end:,.2f}")
+        m_col1.metric(
+            f"Performance ({horizon_etf})",
+            f"{ret_pct:+.2f}%",
+            f"Finale: ${p_end:,.2f}",
+            delta_color="inverse" if ret_pct < 0 else "normal"
+        )
         m_col2.metric(
             "Esito AI",
             row_country['Esito AI'],
@@ -490,8 +502,8 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
 
         sl_col1, sl_col2 = st.columns(2)
-        sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"${stop_loss_price:,.2f}", f"-{((p_end - stop_loss_price)/p_end)*100:.2f}%", delta_color="inverse")
-        sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"${take_profit_price:,.2f}", f"+{((take_profit_price - p_end)/p_end)*100:.2f}%")
+        sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"${stop_loss_price:,.2f}", f"-{sl_dist_pct:.2f}%", delta_color="inverse")
+        sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"${take_profit_price:,.2f}", f"+{tp_dist_pct:.2f}%")
 
         fig = go.Figure()
         if chart_type == "Candele (Candlestick)" and 'Open' in df_filt.columns:
@@ -1005,7 +1017,9 @@ elif modulo == "💼 Portafoglio / Paper Trading":
             # Grafico storico simulato del portafoglio (Base 100) + Max DD + Sharpe + Benchmark SPY
             if len(valid_assets) >= 2 and 'df_rets_ptf' in locals() and not df_rets_ptf.empty:
                 ptf_daily_ret = df_rets_ptf.dot(w_vec)
-                ptf_equity = (1.0 + ptf_daily_ret).cumprod() * 100.0
+                ptf_equity_raw = (1.0 + ptf_daily_ret).cumprod() * 100.0
+                # Normalizza esattamente a 100 alla prima data utile della finestra scelta
+                ptf_equity = (ptf_equity_raw / float(ptf_equity_raw.iloc[0])) * 100.0
 
                 val_iniziale = float(ptf_equity.iloc[0])
                 val_finale = float(ptf_equity.iloc[-1])
@@ -1030,7 +1044,8 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 p_col1.metric(
                     f"Profitto / Perdita ({orizzonte_ptf})",
                     f"{perf_pct:+.2f}%",
-                    f"{pnl_euro:+,.2f} €"
+                    f"{pnl_euro:+,.2f} €",
+                    delta_color="inverse" if perf_pct < 0 else "normal"
                 )
                 p_col2.metric(
                     "Controvalore Finale",
@@ -1066,13 +1081,13 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     line=dict(color="#2e7d32" if perf_pct >= 0 else "#d32f2f", width=2.5)
                 ))
 
-                # Benchmark SPY (S&P 500) allineato alle stesse date
+                # Benchmark SPY (S&P 500) allineato alle stesse date e normalizzato esattamente a 100 all'inizio
                 spy_hist = load_etf_history("SPY")
                 if spy_hist is not None and not spy_hist.empty:
                     spy_s = spy_hist.sort_values("Date").set_index("Date")["Close"]
                     spy_aligned = spy_s.reindex(ptf_equity.index).ffill().bfill()
-                    if len(spy_aligned) > 1 and spy_aligned.iloc[0] > 0:
-                        spy_equity = (spy_aligned / spy_aligned.iloc[0]) * 100.0
+                    if len(spy_aligned) > 1 and float(spy_aligned.iloc[0]) > 0:
+                        spy_equity = (spy_aligned / float(spy_aligned.iloc[0])) * 100.0
                         fig_eq.add_trace(go.Scatter(
                             x=spy_equity.index,
                             y=spy_equity.values,
