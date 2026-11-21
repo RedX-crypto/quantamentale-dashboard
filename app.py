@@ -316,6 +316,9 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
 
         close = df['Close']
         current_price = float(close.iloc[-1])
+        prev_week_close = float(close.iloc[-2]) if len(close) >= 2 else current_price
+        diff_vs_prev_pct = ((current_price - prev_week_close) / prev_week_close) * 100.0 if prev_week_close > 0 else 0.0
+
         sma_21 = float(close.rolling(window=21).mean().iloc[-1])
         sma_50 = float(close.rolling(window=50).mean().iloc[-1])
 
@@ -355,13 +358,21 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
         total_score = p1_score + p2_score + p3_score
 
         df_ind = pd.DataFrame({
-            "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
-            "Valore Ufficiale": [f"${current_price:,.2f}", f"{rsi_14:.2f}", f"{macd_hist:+.2f}", f"${sma_21:,.2f}", f"${sma_50:,.2f}"]
+            "Indicatore": ["Chiusura Sett. Prec.", "Var. vs Chiusura Prec.", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
+            "Valore Ufficiale": [
+                f"${prev_week_close:,.2f}",
+                f"{diff_vs_prev_pct:+.2f}%",
+                f"{rsi_14:.2f}",
+                f"{macd_hist:+.2f}",
+                f"${sma_21:,.2f}",
+                f"${sma_50:,.2f}"
+            ]
         })
         df_ind.index = df_ind.index + 1
 
         return {
             "price": current_price,
+            "prev_week_close": prev_week_close,
             "rsi": rsi_14,
             "p1": p1_score,
             "p2": p2_score,
