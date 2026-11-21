@@ -14,6 +14,14 @@ except ImportError:
 
 st.set_page_config(page_title="Quantamentale System", page_icon="📈", layout="wide")
 
+st.markdown("""
+<style>
+[data-testid="stMetricDelta"] svg {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Menu di navigazione laterale
 st.sidebar.title("📌 Navigazione")
 modulo = st.sidebar.radio(
