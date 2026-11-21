@@ -19,7 +19,7 @@ st.sidebar.title("📌 Navigazione")
 modulo = st.sidebar.radio(
     "Seleziona Modulo:",
     [
-        "🏆 Rotazione ETF & Grafici Dettagliati", 
+        "🏆 Rotazione ETF & Grafici Dettagliati",
         "🔄 Correlazione ETF",
         "💼 Portafoglio / Paper Trading",
         "₿ Crypto (BTC & ETH)"
@@ -58,7 +58,9 @@ def clean_country_name(name):
         "us": "america",
         "southkorea": "coreadelsud",
         "korea": "coreadelsud",
-        "southafrica": "sudafrica"
+        "southafrica": "sudafrica",
+        "arabia": "arabiasaudita",
+        "saudiarabia": "arabiasaudita"
     }
     return aliases.get(n, n)
 
@@ -66,6 +68,7 @@ BLACKLIST_OOS = ["Argentina", "Cina", "Corea del Sud", "Corea", "Brasile", "Indo
 
 meta_etfs = {
     "Arabia Saudita": {"Ticker_YF": "KSA", "Sheet_ETF": "Arabia Saudita"},
+    "Arabia": {"Ticker_YF": "KSA", "Sheet_ETF": "Arabia Saudita"},
     "India": {"Ticker_YF": "INDA", "Sheet_ETF": "India"},
     "Germania": {"Ticker_YF": "EWG", "Sheet_ETF": "Germania"},
     "Taiwan": {"Ticker_YF": "EWT", "Sheet_ETF": "Taiwan"},
@@ -84,6 +87,14 @@ meta_etfs = {
     "Corea del Sud": {"Ticker_YF": "EWY", "Sheet_ETF": "Corea"},
     "Indonesia": {"Ticker_YF": "EIDO", "Sheet_ETF": "Indonesia"}
 }
+
+def get_etf_meta(paese):
+    if paese in meta_etfs:
+        return meta_etfs[paese]
+    p_clean = clean_country_name(paese)
+    if p_clean == "arabiasaudita":
+        return {"Ticker_YF": "KSA", "Sheet_ETF": "Arabia Saudita"}
+    return {"Ticker_YF": "SPY", "Sheet_ETF": paese}
 
 @st.cache_data
 def load_etf_history(ticker):
@@ -127,7 +138,7 @@ def filter_by_horizon(df, horizon):
     df_c['Date'] = pd.to_datetime(df_c['Date'])
     df_c = df_c.sort_values('Date')
     last_date = df_c['Date'].max()
-    
+
     if horizon == "1 Mese":
         start_target = last_date - pd.DateOffset(months=1)
     elif horizon == "3 Mesi":
@@ -142,11 +153,11 @@ def filter_by_horizon(df, horizon):
         start_target = last_date - pd.DateOffset(years=5)
     else:
         start_target = df_c['Date'].min()
-        
+
     df_filtered = df_c[df_c['Date'] >= start_target].copy()
     if df_filtered.empty:
         df_filtered = df_c.tail(2).copy()
-        
+
     p_start = df_filtered['Close'].iloc[0]
     p_end = df_filtered['Close'].iloc[-1]
     ret_pct = ((p_end - p_start) / p_start) * 100.0 if p_start > 0 else 0.0
@@ -156,7 +167,7 @@ def filter_by_horizon(df, horizon):
 def load_all_data():
     db_file = find_excel_file("DataBase.xlsx")
     records = []
-    
+
     macro_data_dict = {}
     if db_file:
         try:
@@ -165,21 +176,21 @@ def load_all_data():
             if 'Data' in df_macro_valid.columns:
                 df_macro_valid['Data'] = pd.to_datetime(df_macro_valid['Data'])
                 df_macro_valid = df_macro_valid.sort_values('Data')
-                
+
             df_latest = df_macro_valid.groupby('Country').last().reset_index()
-            
+
             for _, row in df_latest.iterrows():
                 p_name = str(row['Country']).strip()
                 p_key = clean_country_name(p_name)
                 voto_v = float(row['Voto']) if pd.notna(row['Voto']) else 2.50
-                
+
                 pil_raw = row['PIL'] if 'PIL' in row and pd.notna(row['PIL']) else 0.02
                 pil_v = f"{pil_raw * 100:+.2f}%" if isinstance(pil_raw, (int, float)) and abs(pil_raw) < 1 else str(pil_raw)
-                
+
                 pmi_col = [c for c in df_latest.columns if 'pmi' in str(c).lower()][0]
                 pmi_raw = row[pmi_col] if pd.notna(row[pmi_col]) else 50.0
                 pmi_v = round(float(pmi_raw), 1) if isinstance(pmi_raw, (int, float)) else 50.0
-                
+
                 macro_data_dict[p_key] = {"Voto": voto_v, "PIL": pil_v, "PMI": pmi_v}
         except Exception:
             pass
@@ -188,7 +199,7 @@ def load_all_data():
         try:
             # LETTURA RIGOROSA DAL FOGLIO MENSILE (Forecast Month)
             df_fc = pd.read_excel(db_file, sheet_name="Forecast Month")
-            
+
             if 'Data' in df_fc.columns:
                 df_fc['Data'] = pd.to_datetime(df_fc['Data'])
                 latest_date = df_fc['Data'].max()
@@ -197,7 +208,7 @@ def load_all_data():
             for _, row in df_fc.dropna(subset=['Country', 'Previsione']).iterrows():
                 paese = str(row['Country']).strip()
                 fc_str = str(row['Previsione']).strip()
-                
+
                 match = re.search(r'([\d\.,]+)', fc_str)
                 if match:
                     num_str = match.group(1).replace('.', '').replace(',', '.')
@@ -207,19 +218,19 @@ def load_all_data():
                         prob = 50.0
                 else:
                     prob = 50.0
-                    
+
                 segnal = "DOWN" if "DOWN" in fc_str.upper() else "UP"
-                
-                meta = meta_etfs.get(paese, {"Ticker_YF": "SPY", "Sheet_ETF": paese})
+
+                meta = get_etf_meta(paese)
                 p_key = clean_country_name(paese)
                 macro_info = macro_data_dict.get(p_key, {"Voto": 2.50, "PIL": "+2.0%", "PMI": 52.0})
                 is_bl = paese in BLACKLIST_OOS
-                
+
                 df_h = load_etf_history(meta["Ticker_YF"])
                 rsi_val = 50.0
                 mom1m_val = 0.0
                 mom3m_val = 0.0
-                
+
                 if df_h is not None and not df_h.empty and len(df_h) >= 14:
                     close_s = df_h['Close']
                     delta = close_s.diff()
@@ -227,7 +238,7 @@ def load_all_data():
                     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
                     rs = gain / (loss + 1e-9)
                     rsi_val = round(float((100 - (100 / (1 + rs))).iloc[-1]), 1)
-                    
+
                     if len(df_h) >= 21:
                         mom1m_val = round(((close_s.iloc[-1] - close_s.iloc[-21]) / close_s.iloc[-21]) * 100, 2)
                     if len(df_h) >= 63:
@@ -246,15 +257,15 @@ def load_all_data():
                     sintesi_text = "Debole / Sconsigliato"
                 else:
                     sintesi_text = "Supportato"
-                
+
                 records.append({
-                    "Paese": paese, 
-                    "Prob_UP": prob, 
-                    "Segnale": segnal, 
+                    "Paese": paese,
+                    "Prob_UP": prob,
+                    "Segnale": segnal,
                     "Esito AI": f"{prob}% ({segnal})",
                     "Stato OOS": "⛔ Escluso (Acc. < 50%)" if is_bl else "✅ Valido",
-                    "Ticker_YF": meta["Ticker_YF"], 
-                    "Sheet_ETF": meta["Sheet_ETF"], 
+                    "Ticker_YF": meta["Ticker_YF"],
+                    "Sheet_ETF": meta["Sheet_ETF"],
                     "Voto_Macro": round(voto_macro_val, 2),
                     "PIL": macro_info["PIL"],
                     "PMI": macro_info["PMI"],
@@ -266,12 +277,12 @@ def load_all_data():
                 })
         except Exception:
             pass
-            
+
     df = pd.DataFrame(records).sort_values(by="Prob_UP", ascending=False).reset_index(drop=True)
     df["Allocazione"] = 0
     eligible = df[(df["Segnale"] == "UP") & (df["Prob_UP"] >= 60.0) & (df["Stato OOS"] == "✅ Valido")].head(5).index
     df.loc[eligible, "Allocazione"] = 200
-    
+
     df.index = df.index + 1
     return df
 
@@ -288,43 +299,43 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
     symbol = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
     if yf is None:
         return None
-    
+
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period="1y", interval="1wk")
         if df.empty:
             return None
-        
+
         close = df['Close']
         current_price = float(close.iloc[-1])
         sma_21 = float(close.rolling(window=21).mean().iloc[-1])
         sma_50 = float(close.rolling(window=50).mean().iloc[-1])
-        
+
         # RSI (14)
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / (loss + 1e-9)
         rsi_14 = float((100 - (100 / (1 + rs))).iloc[-1])
-        
+
         # MACD Hist
         exp1 = close.ewm(span=12, adjust=False).mean()
         exp2 = close.ewm(span=26, adjust=False).mean()
         macd = exp1 - exp2
         signal = macd.ewm(span=9, adjust=False).mean()
         macd_hist = float((macd - signal).iloc[-1])
-        
+
         # Pilastro 1: Tecnico (0-3 Punti)
         p1_sma = 1 if (current_price > sma_21 and current_price > sma_50) else 0
         p1_macd = 1 if macd_hist > 0 else 0
         p1_rsi = 1 if (50 <= rsi_14 <= 70) else 0
         p1_score = p1_sma + p1_macd + p1_rsi
-        
+
         # Pilastro 2: Sentiment (0-3 Punti)
         p2_fng = 1 if (30 <= fng_val <= 65) else 0
         p2_not_greed = 1 if fng_val < 78 else 0
         p2_score = min(3, p2_fng + p2_not_greed + 1)
-        
+
         # Pilastro 3: Macro (DXY Index) (0-3 Punti)
         try:
             dxy_df = yf.Ticker("^NYICDX").history(period="3m", interval="1wk")['Close']
@@ -332,15 +343,15 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
         except Exception:
             dxy_weak = 1
         p3_score = min(3, dxy_weak + 2)
-        
+
         total_score = p1_score + p2_score + p3_score
-        
+
         df_ind = pd.DataFrame({
             "Indicatore": ["Prezzo", "RSI (14)", "MACD Hist", "SMA 21", "SMA 50"],
             "Valore Ufficiale": [f"${current_price:,.2f}", f"{rsi_14:.2f}", f"{macd_hist:+.2f}", f"${sma_21:,.2f}", f"${sma_50:,.2f}"]
         })
         df_ind.index = df_ind.index + 1
-        
+
         return {
             "price": current_price,
             "rsi": rsi_14,
@@ -356,17 +367,17 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
 # SENZA CACHE per leggere sempre i dati aggiornati dal foglio Excel
 def load_crypto_indicators(crypto_code):
     db_file = find_excel_file("DataBase.xlsx")
-    
+
     if db_file:
         try:
             df_c = pd.read_excel(db_file, sheet_name="Tecnica Crypto S").dropna(subset=["Crypto"])
             sub = df_c[df_c["Crypto"] == crypto_code].copy()
-            
+
             if not sub.empty:
                 if 'Data' in sub.columns:
                     sub['Data'] = pd.to_datetime(sub['Data'])
                     sub = sub.sort_values(by='Data', ascending=False)
-                
+
                 for _, row in sub.iterrows():
                     predict_val = str(row.get("Predict", "")).strip()
                     if predict_val and predict_val != "nan":
@@ -379,11 +390,11 @@ def load_crypto_indicators(crypto_code):
                                 prob_num = 50.0
                         else:
                             prob_num = 60.0 if "UP" in predict_val.upper() else 40.0
-                            
+
                         return prob_num, predict_val
         except Exception:
             pass
-            
+
     return 0.0, "⚠️ In attesa di aggiornamento DB"
 
 df_all = load_all_data()
@@ -396,8 +407,11 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     st.markdown("---")
 
     st.subheader("📊 Tabella Confluenza Quantamentale")
+    solo_validati = st.checkbox("Mostra solo segnali Validati (✅)", value=False)
+    df_tab_view = df_all[df_all["Stato OOS"] == "✅ Valido"] if solo_validati else df_all
+
     st.dataframe(
-        df_all[["Paese", "Esito AI", "Allocazione", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]],
+        df_tab_view[["Paese", "Esito AI", "Allocazione", "Stato OOS", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M", "Sintesi"]],
         use_container_width=True
     )
 
@@ -411,7 +425,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 
     down_df = df_all[df_all["Segnale"] == "DOWN"].sort_values(by="Prob_UP", ascending=False)
     best_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
-    c2.metric("🔴 Migliore DOWN", best_down["Paese"], best_down["Esito AI"])
+    c2.metric("🔴 Migliore DOWN", best_down["Paese"], best_down["Esito AI"], delta_color="inverse")
 
     best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
     c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"])
@@ -429,9 +443,9 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     is_log = col_sel3.checkbox("Scala Logaritmica", value=True)
 
     horizon_etf = st.radio(
-        "Orizzonte Temporale:", 
-        ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], 
-        index=6, 
+        "Orizzonte Temporale:",
+        ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"],
+        index=3,
         horizontal=True
     )
 
@@ -440,23 +454,27 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 
     if df_chart is not None and not df_chart.empty:
         df_filt, p_start, p_end, ret_pct = filter_by_horizon(df_chart, horizon_etf)
-        
+
         recent_closes = df_chart['Close'].tail(60)
         daily_rets = recent_closes.pct_change().dropna()
         vol_monthly = float(daily_rets.std() * np.sqrt(21)) if len(daily_rets) > 10 else 0.05
-        
+
         stop_loss_price = p_end * (1.0 - max(0.03, vol_monthly * 1.2))
         take_profit_price = p_end * (1.0 + max(0.06, vol_monthly * 2.0))
-        
+
         m_col1, m_col2, m_col3 = st.columns(3)
         m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: ${p_end:,.2f}")
-        m_col2.metric("Esito AI", row_country['Esito AI'])
+        m_col2.metric(
+            "Esito AI",
+            row_country['Esito AI'],
+            delta_color="inverse" if row_country['Segnale'] == "DOWN" else "normal"
+        )
         m_col3.metric("Stato OOS / Voto Macro", f"{row_country['Stato OOS']} | Voto: {row_country['Voto_Macro']}")
-        
+
         sl_col1, sl_col2 = st.columns(2)
         sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"${stop_loss_price:,.2f}", f"-{((p_end - stop_loss_price)/p_end)*100:.2f}%", delta_color="inverse")
         sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"${take_profit_price:,.2f}", f"+{((take_profit_price - p_end)/p_end)*100:.2f}%")
-        
+
         fig = go.Figure()
         if chart_type == "Candele (Candlestick)" and 'Open' in df_filt.columns:
             fig.add_trace(go.Candlestick(
@@ -468,7 +486,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
                 x=df_filt['Date'], y=df_filt['Close'], mode='lines', name=selected_country,
                 line=dict(color='#2962FF', width=2.5)
             ))
-            
+
         fig.add_hline(
             y=stop_loss_price, line_dash="dash", line_color="#ef5350", line_width=2,
             annotation_text=f"Stop Loss: ${stop_loss_price:,.2f}", annotation_position="bottom right"
@@ -477,7 +495,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
             y=take_profit_price, line_dash="dash", line_color="#ef5350", line_width=2,
             annotation_text=f"Take Profit: ${take_profit_price:,.2f}", annotation_position="top right"
         )
-            
+
         fig.update_layout(
             title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']}) con Livelli Operativi</b>", font=dict(size=16)),
             yaxis_title="Prezzo ($)", xaxis_title="Data", template="plotly_white", height=520,
@@ -764,28 +782,48 @@ elif modulo == "💼 Portafoglio / Paper Trading":
     if len(asset_scelti) < 2:
         st.info("Seleziona almeno 2 asset per calcolare correlazione e metriche di portafoglio.")
     else:
-        st.write("Imposta i pesi percentuali per ciascun asset (la somma deve essere **100%**):")
-        pesi_dict = {}
-        cols_w = st.columns(min(4, len(asset_scelti)))
         peso_iniziale = int(100 // len(asset_scelti))
         resto = 100 - (peso_iniziale * len(asset_scelti))
 
+        # Inizializza pesi in session_state per consentire anche la normalizzazione con un clic
+        for idx, asset_label in enumerate(asset_scelti):
+            k_state = f"peso_{asset_label}"
+            if k_state not in st.session_state:
+                st.session_state[k_state] = peso_iniziale + (resto if idx == 0 else 0)
+
+        st.write("Imposta i pesi percentuali per ciascun asset (la somma deve essere **100%**):")
+        pesi_dict = {}
+        cols_w = st.columns(min(4, len(asset_scelti)))
+
         for idx, asset_label in enumerate(asset_scelti):
             col_curr = cols_w[idx % len(cols_w)]
-            val_def = peso_iniziale + (resto if idx == 0 else 0)
+            k_state = f"peso_{asset_label}"
             pesi_dict[asset_label] = col_curr.number_input(
                 f"{asset_label} (%)",
                 min_value=0,
                 max_value=100,
-                value=val_def,
                 step=5,
-                key=f"peso_{asset_label}"
+                key=k_state
             )
 
         somma_pesi = sum(pesi_dict.values())
 
         if somma_pesi != 100:
             st.error(f"⚠️ La somma attuale dei pesi è **{somma_pesi}%**. Regola i valori affinché il totale sia esattamente **100%**.")
+            if st.button("⚖️ Normalizza al 100%"):
+                if somma_pesi > 0:
+                    grezzi = {k: (v / somma_pesi) * 100.0 for k, v in pesi_dict.items()}
+                    arrotondati = {k: int(round(v)) for k, v in grezzi.items()}
+                    diff_100 = 100 - sum(arrotondati.values())
+                    if diff_100 != 0 and len(arrotondati) > 0:
+                        chiave_max = max(arrotondati.keys(), key=lambda k: arrotondati[k])
+                        arrotondati[chiave_max] = max(0, arrotondati[chiave_max] + diff_100)
+                    for k, val_norm in arrotondati.items():
+                        st.session_state[f"peso_{k}"] = val_norm
+                else:
+                    for idx_n, k in enumerate(pesi_dict.keys()):
+                        st.session_state[f"peso_{k}"] = peso_iniziale + (resto if idx_n == 0 else 0)
+                st.rerun()
         else:
             # Raccolta probabilità AI, segnali e serie storiche dei rendimenti
             prob_num_btc, prob_str_btc = load_crypto_indicators("BTC")
@@ -807,7 +845,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     ticker_curr = r_row["Ticker_YF"]
                     segnale_curr = r_row["Segnale"]
                     prob_raw = float(r_row["Prob_UP"])
-                    # Probabilità direzionale UP (se il segnale è DOWN, la prob di salita è 100 - prob_raw)
                     prob_up_eff = prob_raw if segnale_curr == "UP" else (100.0 - prob_raw)
                     stato_curr = r_row["Stato OOS"]
 
@@ -830,7 +867,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                         prob_up_eff = 50.0
                     stato_curr = "Settimanale"
 
-                    # Per allineare su base giornaliera con gli ETF scarichiamo history giornaliero
                     if yf is not None:
                         try:
                             df_c_daily = yf.Ticker(ticker_curr).history(period="5y")
@@ -854,7 +890,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     "Note / Filtro": stato_curr
                 })
 
-            # Calcolo matrice di correlazione, correlazione media ponderata e volatilità di portafoglio
             corr_media_ptf = 0.0
             vol_annua_ptf = 0.0
             corr_mat_ptf = None
@@ -869,10 +904,8 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     corr_mat_ptf = df_rets_ptf.corr()
                     cov_mat_ann = df_rets_ptf.cov() * 252.0
 
-                    # Volatilità annualizzata del portafoglio: sqrt(w^T * Cov * w)
                     vol_annua_ptf = float(np.sqrt(np.dot(w_vec.T, np.dot(cov_mat_ann.values, w_vec)))) * 100.0
 
-                    # Correlazione media ponderata tra coppie distinte
                     num_corr = 0.0
                     den_corr = 0.0
                     for i in range(len(valid_assets)):
@@ -882,7 +915,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                             den_corr += wij
                     corr_media_ptf = float(num_corr / den_corr) if den_corr > 0 else 0.0
 
-            # Classificazione Profilo di Rischio Stimato
             if vol_annua_ptf >= 28.0 or quota_crypto >= 35.0:
                 profilo_rischio = "🔴 Aggressivo"
                 desc_rischio = "Alta volatilità / forte esposizione crypto"
@@ -922,7 +954,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 delta_color="off"
             )
 
-            # Avviso se ci sono asset esclusi OOS dentro il portafoglio simulato
             esclusi_in_ptf = [r["Asset"] for r in dettagli_righe if "Escluso" in str(r["Note / Filtro"])]
             if esclusi_in_ptf:
                 st.warning(
@@ -953,7 +984,7 @@ elif modulo == "💼 Portafoglio / Paper Trading":
             )
             col_pie.plotly_chart(fig_pie, use_container_width=True)
 
-            # Grafico storico simulato del portafoglio (Base 100)
+            # Grafico storico simulato del portafoglio (Base 100) + Max DD + Sharpe + Benchmark SPY
             if len(valid_assets) >= 2 and 'df_rets_ptf' in locals() and not df_rets_ptf.empty:
                 ptf_daily_ret = df_rets_ptf.dot(w_vec)
                 ptf_equity = (1.0 + ptf_daily_ret).cumprod() * 100.0
@@ -964,25 +995,47 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 capitale_finale = capitale_totale * (val_finale / val_iniziale) if val_iniziale > 0 else capitale_totale
                 pnl_euro = capitale_finale - capitale_totale
 
+                # Maximum Drawdown (%)
+                roll_max = ptf_equity.cummax()
+                drawdown_series = (ptf_equity / roll_max) - 1.0
+                max_dd_pct = float(drawdown_series.min()) * 100.0
+
+                # Sharpe Ratio annualizzato (rf = 0% per semplicità)
+                ret_std_daily = float(ptf_daily_ret.std())
+                ret_mean_daily = float(ptf_daily_ret.mean())
+                sharpe_ratio = ((ret_mean_daily * 252.0) / (ret_std_daily * np.sqrt(252.0))) if ret_std_daily > 0 else 0.0
+
                 st.markdown("---")
                 st.subheader(f"📈 4. Performance Storica Simulata ({orizzonte_ptf})")
 
-                p_col1, p_col2, p_col3 = st.columns(3)
+                p_col1, p_col2, p_col3, p_col4, p_col5 = st.columns(5)
                 p_col1.metric(
                     f"Profitto / Perdita ({orizzonte_ptf})",
                     f"{perf_pct:+.2f}%",
                     f"{pnl_euro:+,.2f} €"
                 )
                 p_col2.metric(
-                    "Capitale Iniziale Simulato",
-                    f"{capitale_totale:,.2f} €",
-                    f"Base: {val_iniziale:.1f}",
+                    "Controvalore Finale",
+                    f"{capitale_finale:,.2f} €",
+                    f"Iniziale: {capitale_totale:,.0f} €",
                     delta_color="off"
                 )
                 p_col3.metric(
-                    "Controvalore Finale Simulato",
-                    f"{capitale_finale:,.2f} €",
-                    f"Indice finale: {val_finale:.2f}",
+                    "Max Drawdown",
+                    f"{max_dd_pct:.2f}%",
+                    "Picco-Fondo nel periodo",
+                    delta_color="inverse"
+                )
+                p_col4.metric(
+                    "Sharpe Ratio (rf=0%)",
+                    f"{sharpe_ratio:.2f}",
+                    "Rendimento / Rischio",
+                    delta_color="off"
+                )
+                p_col5.metric(
+                    "Indice Finale (Base 100)",
+                    f"{val_finale:.2f}",
+                    f"Start: {val_iniziale:.1f}",
                     delta_color="off"
                 )
 
@@ -994,16 +1047,33 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     name="Portafoglio Simulato",
                     line=dict(color="#2e7d32" if perf_pct >= 0 else "#d32f2f", width=2.5)
                 ))
+
+                # Benchmark SPY (S&P 500) allineato alle stesse date
+                spy_hist = load_etf_history("SPY")
+                if spy_hist is not None and not spy_hist.empty:
+                    spy_s = spy_hist.sort_values("Date").set_index("Date")["Close"]
+                    spy_aligned = spy_s.reindex(ptf_equity.index).ffill().bfill()
+                    if len(spy_aligned) > 1 and spy_aligned.iloc[0] > 0:
+                        spy_equity = (spy_aligned / spy_aligned.iloc[0]) * 100.0
+                        fig_eq.add_trace(go.Scatter(
+                            x=spy_equity.index,
+                            y=spy_equity.values,
+                            mode="lines",
+                            name="Benchmark SPY (Base 100)",
+                            line=dict(color="#757575", width=2, dash="dash")
+                        ))
+
                 fig_eq.add_hline(y=100.0, line_dash="dot", line_color="#888888", annotation_text="Base 100")
                 fig_eq.update_layout(
-                    title=dict(text=f"<b>Andamento Storico Simulato del Portafoglio (Base 100 — {orizzonte_ptf})</b>", font=dict(size=15)),
-                    yaxis_title="Valore Portafoglio (Base 100)",
+                    title=dict(text=f"<b>Andamento Storico Simulato vs Benchmark SPY (Base 100 — {orizzonte_ptf})</b>", font=dict(size=15)),
+                    yaxis_title="Valore (Base 100)",
                     xaxis_title="Data",
                     template="plotly_white",
-                    height=380,
+                    height=400,
                     margin=dict(l=30, r=30, t=45, b=30),
                     xaxis=dict(showgrid=True, gridcolor="#F0F2F5", type="date"),
-                    yaxis=dict(showgrid=True, gridcolor="#F0F2F5")
+                    yaxis=dict(showgrid=True, gridcolor="#F0F2F5"),
+                    showlegend=True
                 )
                 st.plotly_chart(fig_eq, use_container_width=True)
 
@@ -1013,86 +1083,104 @@ elif modulo == "💼 Portafoglio / Paper Trading":
 elif modulo == "₿ Crypto (BTC & ETH)":
     st.title("₿ Quantamentale Crypto — Tripla Confluenza & AI")
     st.markdown("---")
-    
+
     global_fng = get_global_fear_and_greed()
-    
+
     prob_num_btc, prob_str_btc = load_crypto_indicators("BTC")
     prob_num_eth, prob_str_eth = load_crypto_indicators("ETH")
-    
+
     col_btc, col_eth = st.columns(2)
-    
+
     with col_btc:
         st.markdown("### 🟡 Bitcoin (BTC)")
         btc_conf = get_crypto_confluence_auto("BTC", global_fng)
-        
+
         if btc_conf:
-            st.metric("Prezzo Attuale BTC", f"${btc_conf['price']:,.2f}", f"Previsione AI (DB): {prob_str_btc}")
-            
+            is_btc_down = "DOWN" in str(prob_str_btc).upper()
+            st.metric(
+                "Prezzo Attuale BTC",
+                f"${btc_conf['price']:,.2f}",
+                f"Previsione AI (DB): {prob_str_btc}",
+                delta_color="inverse" if is_btc_down else "normal"
+            )
+
             st.write("---")
             st.subheader(f"📊 Tripla Confluenza BTC: **{btc_conf['total']} / 9 Punti**")
             st.progress(btc_conf['total'] / 9)
-            
+
             st.write(f"• Pilastro 1 (Tecnico & Momentum): **{btc_conf['p1']}/3**")
             st.write(f"• Pilastro 2 (Sentiment & On-Chain): **{btc_conf['p2']}/3**")
             st.write(f"• Pilastro 3 (Macro & Liquidità/DXY): **{btc_conf['p3']}/3**")
-            
-            if btc_conf['total'] >= 6 and prob_num_btc >= 60.0:
+
+            if btc_conf['total'] >= 6 and prob_num_btc >= 60.0 and not is_btc_down:
                 st.success(f"🟢 **SEGNALE OPERATIVO: COMPRA / UP**\n(AI: {prob_num_btc}% | Confluenza: {btc_conf['total']}/9)")
             else:
                 st.warning(f"🔴 **SEGNALE OPERATIVO: LIQUIDITÀ / NEUTRO**\n(AI: {prob_str_btc} | Confluenza: {btc_conf['total']}/9)")
-                
+
             st.write("---")
             st.dataframe(btc_conf['df_ind'], use_container_width=True)
 
     with col_eth:
         st.markdown("### 🔷 Ethereum (ETH)")
         eth_conf = get_crypto_confluence_auto("ETH", global_fng)
-        
+
         if eth_conf:
-            st.metric("Prezzo Attuale ETH", f"${eth_conf['price']:,.2f}", f"Previsione AI (DB): {prob_str_eth}")
-            
+            is_eth_down = "DOWN" in str(prob_str_eth).upper()
+            st.metric(
+                "Prezzo Attuale ETH",
+                f"${eth_conf['price']:,.2f}",
+                f"Previsione AI (DB): {prob_str_eth}",
+                delta_color="inverse" if is_eth_down else "normal"
+            )
+
             st.write("---")
             st.subheader(f"📊 Tripla Confluenza ETH: **{eth_conf['total']} / 9 Punti**")
             st.progress(eth_conf['total'] / 9)
-            
+
             st.write(f"• Pilastro 1 (Tecnico & Momentum): **{eth_conf['p1']}/3**")
             st.write(f"• Pilastro 2 (Sentiment & On-Chain): **{eth_conf['p2']}/3**")
             st.write(f"• Pilastro 3 (Macro & Liquidità/DXY): **{eth_conf['p3']}/3**")
-            
-            if eth_conf['total'] >= 6 and prob_num_eth >= 60.0:
+
+            if eth_conf['total'] >= 6 and prob_num_eth >= 60.0 and not is_eth_down:
                 st.success(f"🟢 **SEGNALE OPERATIVO: COMPRA / UP**\n(AI: {prob_num_eth}% | Confluenza: {eth_conf['total']}/9)")
             else:
                 st.warning(f"🔴 **SEGNALE OPERATIVO: LIQUIDITÀ / NEUTRO**\n(AI: {prob_str_eth} | Confluenza: {eth_conf['total']}/9)")
-                
+
             st.write("---")
             st.dataframe(eth_conf['df_ind'], use_container_width=True)
-            
+
     st.markdown("---")
     st.subheader("📈 Grafico Settimanale Avanzato Crypto")
-    
+
     col_c1, col_c2, col_c3 = st.columns([2, 1, 1])
     selected_crypto = col_c1.selectbox("Seleziona Crypto:", ["Bitcoin (BTC)", "Ethereum (ETH)"])
     chart_type_crypto = col_c2.radio("Tipo Grafico Crypto:", ["Linea", "Candele (Candlestick)"], horizontal=True)
     is_log_crypto = col_c3.checkbox("Scala Logaritmica Crypto", value=True)
-    
+
     horizon_crypto = st.radio(
-        "Orizzonte Temporale Crypto:", 
-        ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], 
-        index=6, 
+        "Orizzonte Temporale Crypto:",
+        ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"],
+        index=6,
         horizontal=True
     )
-    
+
     code_crypto = "BTC" if "BTC" in selected_crypto else "ETH"
     df_crypto_chart = load_crypto_history(code_crypto)
-    
+
     if df_crypto_chart is not None and not df_crypto_chart.empty:
         df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_chart, horizon_crypto)
-        
+        curr_prob_str = prob_str_btc if code_crypto == "BTC" else prob_str_eth
+        is_curr_down = "DOWN" in str(curr_prob_str).upper()
+
         c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric(f"Performance ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Prezzo finale: ${p_c_end:,.2f}")
-        c_m2.metric("Previsione AI Ufficiale (DB)", prob_str_btc if code_crypto == "BTC" else prob_str_eth)
+        c_m1.metric(f"Performance ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Chiusura Settimanale: ${p_c_end:,.2f}")
+        c_m2.metric(
+            "Previsione AI Ufficiale (DB)",
+            curr_prob_str,
+            delta_color="inverse" if is_curr_down else "normal"
+        )
         c_m3.metric("Crypto Fear & Greed Index", f"{global_fng} / 100")
-        
+
         fig_c = go.Figure()
         if chart_type_crypto == "Candele (Candlestick)" and 'Open' in df_c_filt.columns:
             fig_c.add_trace(go.Candlestick(
@@ -1104,7 +1192,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
                 x=df_c_filt['Date'], y=df_c_filt['Close'], mode='lines', name=selected_crypto,
                 line=dict(color='#F7931A' if code_crypto == "BTC" else '#627EEA', width=2.5)
             ))
-            
+
         fig_c.update_layout(
             title=dict(text=f"<b>Grafico Settimanale {selected_crypto}</b>", font=dict(size=16)),
             yaxis_title="Prezzo ($)", xaxis_title="Data", template="plotly_white", height=500,
