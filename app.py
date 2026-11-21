@@ -456,10 +456,9 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 
     st.subheader("📈 Grafico Storico Avanzato ETF Paese")
 
-    col_sel1, col_sel2, col_sel3 = st.columns([2, 1, 1])
+    col_sel1, col_sel2 = st.columns([2, 1.5])
     selected_country = col_sel1.selectbox("Seleziona ETF Paese:", df_all["Paese"].tolist())
     chart_type = col_sel2.radio("Tipo Grafico:", ["Linea", "Candele (Candlestick)"], horizontal=True)
-    is_log = col_sel3.checkbox("Scala Logaritmica", value=True)
 
     horizon_etf = st.radio(
         "Orizzonte Temporale:",
@@ -519,7 +518,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
             title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']}) con Livelli Operativi</b>", font=dict(size=16)),
             yaxis_title="Prezzo ($)", xaxis_title="Data", template="plotly_white", height=520,
             margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
-            yaxis=dict(type="log" if is_log else "linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
+            yaxis=dict(type="linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
