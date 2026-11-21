@@ -19,6 +19,11 @@ st.markdown("""
 [data-testid="stMetricDelta"] svg {
     display: none !important;
 }
+/* Forza il colore rosso/negativo per i delta che rappresentano perdite/stop loss */
+div[data-testid="stMetric"]:has(div[data-testid="stMetricDelta"]:has-text("-")) [data-testid="stMetricDelta"] {
+    background-color: rgba(255, 75, 75, 0.16) !important;
+    color: #ff6b6b !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -454,7 +459,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         "📉 Peggiore del Mese (Prezzo)",
         worst_mom["Paese"],
         worst_mom["Mom_1M"],
-        delta_color="inverse" if worst_mom["Mom_1M_num"] < 0 else "normal"
+        delta_color="inverse"
     )
 
     st.markdown("---")
