@@ -97,7 +97,7 @@ def compute_rsi_wilder(close_series, period=14):
     rs = gain / (loss + 1e-12)
     return 100.0 - (100.0 / (1.0 + rs))
 
-# Tutti i ticker fallback rigorosamente in EUR
+# Tutti i ticker fallback rigorosamente in EUR (allineati a ETF_Predictor.R v5.0)
 fallback_tickers = {
     "Arabia": "IUSS.DE", "India": "NDIA.MI", "Germania": "MD4X.DE", "Taiwan": "DBX5.DE",
     "Spagna": "XESP.DE", "Francia": "IS3U.DE", "UK": "SXRW.DE", "Italia": "ITAMID.MI",
@@ -105,6 +105,7 @@ fallback_tickers = {
     "Giappone": "VJPA.MI", "Argentina": "ALAT.MI", "Brasile": "4BRZ.DE", "Cina": "ICGA.DE",
     "Corea": "KOR.MI", "Indonesia": "INDO.MI"
 }
+XEON_LABEL = "ETF: XEON (Monetario EUR)"
 
 @st.cache_data(ttl=3600)
 def load_etf_history(ticker):
@@ -173,7 +174,13 @@ def load_all_data():
     etf_file = find_excel_file("Archivio_ETF_Definitivo.xlsx")
     db_file = find_excel_file("DataBase.xlsx")
     records = []
-    etf_last_month = "N/D"
+    etf_meta = {
+        "last_month": "N/D",
+        "budget_totale": 1000,
+        "xeon_eur": 0,
+        "xeon_ticker": "XEON.DE",
+        "xeon_isin": "LU0290358497"
+    }
 
     macro_data_dict = {}
     if db_file:
@@ -203,25 +210,36 @@ def load_all_data():
             sheet_target = "Classifica_Strutturale" if "Classifica_Strutturale" in xls.sheet_names else xls.sheet_names[0]
             df_etf = pd.read_excel(etf_file, sheet_name=sheet_target)
 
-            if "Storico_Prezzi_EUR" in xls.sheet_names:
+            if "Riepilogo_Allocazione" in xls.sheet_names:
+                df_rep = pd.read_excel(etf_file, sheet_name="Riepilogo_Allocazione")
+                if not df_rep.empty:
+                    r0 = df_rep.iloc[0]
+                    etf_meta["last_month"] = str(r0.get("Mese_Chiuso", "N/D"))
+                    etf_meta["budget_totale"] = int(round(float(r0.get("Budget_Totale_EUR", 1000))))
+                    etf_meta["xeon_eur"] = int(round(float(r0.get("XEON_Difensivo_EUR", 0))))
+                    etf_meta["xeon_ticker"] = str(r0.get("XEON_Ticker", "XEON.DE"))
+                    etf_meta["xeon_isin"] = str(r0.get("XEON_ISIN", "LU0290358497"))
+            elif "Storico_Prezzi_EUR" in xls.sheet_names:
                 df_st = pd.read_excel(etf_file, sheet_name="Storico_Prezzi_EUR", nrows=1)
                 if not df_st.empty and "Mese" in df_st.columns:
-                    etf_last_month = str(df_st["Mese"].iloc[0])
+                    etf_meta["last_month"] = str(df_st["Mese"].iloc[0])
 
             for _, row in df_etf.dropna(subset=['Paese']).iterrows():
                 paese = str(row['Paese']).strip()
                 ticker = str(row.get('Ticker', fallback_tickers.get(paese, 'CSSPX.MI'))).strip()
                 trend_ok = bool(row.get('Trend_OK', False))
                 trend_label = "🟢 UP" if trend_ok else "🔴 DOWN"
-                stato_azione = str(row.get('Stato_Azione', 'CONFERMATO' if trend_ok else 'FUORI / CASH'))
+                stato_azione = str(row.get('Stato_Azione', 'CONFERMATO' if trend_ok else 'FUORI / XEON'))
                 score_q = float(row.get('Score_Quant', 0.0)) if pd.notna(row.get('Score_Quant')) else 0.0
                 dist_sma10 = float(row.get('Dist_SMA10_pct', 0.0)) if pd.notna(row.get('Dist_SMA10_pct')) else 0.0
+                mom6_val = float(row.get('Mom_6M_pct', 0.0)) if pd.notna(row.get('Mom_6M_pct')) else 0.0
                 mom12_val = float(row.get('Mom_12M_pct', 0.0)) if pd.notna(row.get('Mom_12M_pct')) else 0.0
                 alloc_eur = int(round(float(row.get('Allocazione_EUR', 0)))) if pd.notna(row.get('Allocazione_EUR')) else 0
 
                 p_key = clean_country_name(paese)
-                macro_info = macro_data_dict.get(p_key, {"Voto": row.get('Voto_Macro', np.nan), "PIL": "N/D", "PMI": "N/D"})
-                voto_macro_val = float(macro_info["Voto"]) if pd.notna(macro_info["Voto"]) else np.nan
+                voto_excel = row.get('Voto_Macro', np.nan)
+                macro_info = macro_data_dict.get(p_key, {"Voto": voto_excel, "PIL": "N/D", "PMI": "N/D"})
+                voto_macro_val = float(voto_excel) if pd.notna(voto_excel) else (float(macro_info["Voto"]) if pd.notna(macro_info["Voto"]) else np.nan)
 
                 df_h = load_etf_history(ticker)
                 rsi_val, mom1m_val, mom3m_val = 50.0, 0.0, 0.0
@@ -240,9 +258,11 @@ def load_all_data():
                     "Trend": trend_label,
                     "Stato_Azione": stato_azione,
                     "Allocazione": alloc_eur,
-                    "Score_Quant": round(score_q, 3),
+                    "Score_Quant": round(score_q, 1),
+                    "Score_Label": f"{score_q:+.1f}%",
                     "Voto_Macro": round(voto_macro_val, 2) if pd.notna(voto_macro_val) else "N/D",
                     "Dist_SMA10": f"{dist_sma10:+.1f}%",
+                    "Mom_6M": f"{mom6_val:+.1f}%",
                     "Mom_12M": f"{mom12_val:+.1f}%",
                     "PIL": macro_info["PIL"],
                     "PMI": macro_info["PMI"],
@@ -255,12 +275,16 @@ def load_all_data():
             st.error(f"Errore lettura Archivio_ETF_Definitivo.xlsx: {e}")
 
     if not records:
-        return pd.DataFrame(), etf_last_month
+        return pd.DataFrame(), etf_meta
 
-    # Ordinamento puramente Quant (Voto_Macro affiancato solo per lettura)
     df = pd.DataFrame(records).sort_values(by=["Trend_OK", "Score_Quant"], ascending=[False, False]).reset_index(drop=True)
     df.index = df.index + 1
-    return df, etf_last_month
+
+    # Calcola XEON fallback se il foglio Riepilogo_Allocazione non è presente
+    if etf_meta["xeon_eur"] == 0 and df["Allocazione"].sum() < etf_meta["budget_totale"]:
+        etf_meta["xeon_eur"] = max(0, etf_meta["budget_totale"] - int(df["Allocazione"].sum()))
+
+    return df, etf_meta
 
 @st.cache_data(ttl=3600)
 def get_global_fear_and_greed():
@@ -372,7 +396,8 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
 # ------------------------------------------------------------------------------
 # CARICAMENTO DATI GLOBALI & SIDEBAR
 # ------------------------------------------------------------------------------
-df_all, etf_last_month = load_all_data()
+df_all, etf_meta = load_all_data()
+etf_last_month = etf_meta["last_month"]
 btc_arch_global = load_crypto_archive("BTC")
 eth_arch_global = load_crypto_archive("ETH")
 
@@ -393,27 +418,39 @@ if st.sidebar.button("🔄 Aggiorna Dati da Excel"):
 
 st.sidebar.markdown("---")
 st.sidebar.caption("📅 **Stato Archivi Caricati**")
-st.sidebar.caption(f"• ETF Paesi: **{etf_last_month}**" if not df_all.empty else "• ETF Paesi: ⚠️ Mancante")
-st.sidebar.caption(f"• Bitcoin: **{btc_arch_global['data']}**" if btc_arch_global else "• Bitcoin: ⚠️ Mancante")
-st.sidebar.caption(f"• Ethereum: **{eth_arch_global['data']}**" if eth_arch_global else "• Ethereum: ⚠️ Mancante")
+st.sidebar.caption(f"• ETF Dual Mom v5: **{etf_last_month}**" if not df_all.empty else "• ETF Paesi: ⚠️ Mancante")
+st.sidebar.caption(f"• Bitcoin v4.1: **{btc_arch_global['data']}**" if btc_arch_global else "• Bitcoin: ⚠️ Mancante")
+st.sidebar.caption(f"• Ethereum v4.1: **{eth_arch_global['data']}**" if eth_arch_global else "• Ethereum: ⚠️ Mancante")
 
 # =============================================================================
-# PAGINA 1: ROTAZIONE ETF & GRAFICI DETTAGLIATI
+# PAGINA 1: ROTAZIONE ETF & GRAFICI DETTAGLIATI (DUAL MOMENTUM v5.0 — V1)
 # =============================================================================
 if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
-    st.title("🏆 Rotazione Strutturale ETF & Grafici Dettagliati")
+    st.title("🏆 Rotazione ETF — Dual Momentum Puro v5.0 (V1)")
     st.markdown("---")
 
     if df_all.empty:
-        st.warning("⚠️ File `Archivio_ETF_Definitivo.xlsx` non trovato. Caricalo su GitHub o lancia `ETF_Predictor.R`.")
+        st.warning("⚠️ File `Archivio_ETF_Definitivo.xlsx` non trovato. Caricalo su GitHub o lancia `ETF_Predictor.R` v5.0.")
         st.stop()
 
-    st.subheader("📊 Tabella Trend Strutturale & Allocazione Mensile")
-    solo_up = st.checkbox("Mostra solo ETF in Trend UP (🟢)", value=False)
+    alloc_eq_tot = int(df_all["Allocazione"].sum())
+    alloc_xeon_tot = int(etf_meta["xeon_eur"])
+    n_attivi = int((df_all["Allocazione"] > 0).sum())
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("🌍 Azionario Paesi Attivo", f"{alloc_eq_tot} €", f"{n_attivi} ETF su 5 slot", delta_color="off")
+    k2.metric(f"🛡️ Parcheggio Difensivo ({etf_meta['xeon_ticker']})", f"{alloc_xeon_tot} €", f"ISIN: {etf_meta['xeon_isin']}", delta_color="off")
+    k3.metric("📅 Ultimo Mese Chiuso", etf_last_month, "Filtro: P > SMA10 | Top 3 / Keep 8", delta_color="off")
+
+    st.markdown("---")
+    st.subheader("📊 Tabella Dual Momentum (6M–12M) & Voto Macro Informativo")
+    solo_up = st.checkbox("Mostra solo ETF in Trend UP (🟢 P > SMA10)", value=False)
     df_tab_view = df_all[df_all["Trend_OK"] == True] if solo_up else df_all
 
     st.dataframe(
-        df_tab_view[["Paese", "Trend", "Stato_Azione", "Allocazione", "Score_Quant", "Voto_Macro", "Dist_SMA10", "Mom_12M", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M"]],
+        df_tab_view[["Paese", "Trend", "Stato_Azione", "Allocazione", "Score_Label", "Voto_Macro", "Dist_SMA10", "Mom_6M", "Mom_12M", "PIL", "PMI", "RSI", "Mom_1M"]].rename(
+            columns={"Score_Label": "Mom_6_12M"}
+        ),
         use_container_width=True
     )
 
@@ -423,11 +460,11 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 
     up_df = df_all[df_all["Trend_OK"] == True]
     best_up = up_df.iloc[0] if not up_df.empty else df_all.iloc[0]
-    c1.metric("🟢 Migliore Trend UP", best_up["Paese"], f"Score: {best_up['Score_Quant']:.3f}", delta_color="normal")
+    c1.metric("🟢 Migliore Trend UP", best_up["Paese"], f"Mom 6-12M: {best_up['Score_Label']}", delta_color="normal")
 
     down_df = df_all[df_all["Trend_OK"] == False].sort_values(by="Score_Quant", ascending=True)
     worst_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
-    c2.metric("🔴 Peggiore Trend DOWN", worst_down["Paese"], f"Score: {worst_down['Score_Quant']:.3f}", delta_color="inverse")
+    c2.metric("🔴 Peggiore Trend DOWN", worst_down["Paese"], f"Mom 6-12M: {worst_down['Score_Label']}", delta_color="inverse")
 
     best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
     c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"], delta_color="normal")
@@ -471,9 +508,9 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
             delta_color="normal" if ret_pct >= 0 else "inverse"
         )
         m_col2.metric(
-            "Trend Strutturale",
+            "Dual Momentum & Macro",
             row_country["Trend"],
-            f"Score: {row_country['Score_Quant']:.3f} | Macro: {row_country['Voto_Macro']}",
+            f"Mom 6-12M: {row_country['Score_Label']} | Macro: {row_country['Voto_Macro']}",
             delta_color="normal" if row_country["Trend_OK"] else "inverse"
         )
         m_col3.metric(
@@ -583,7 +620,9 @@ elif modulo == "🔄 Correlazione ETF":
 
     st.markdown("---")
     st.subheader("📋 Confronto Diretto Metriche")
-    df_comp = pd.DataFrame([row1, row2])[["Paese", "Trend", "Stato_Azione", "Score_Quant", "Voto_Macro", "Dist_SMA10", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M"]]
+    df_comp = pd.DataFrame([row1, row2])[["Paese", "Trend", "Stato_Azione", "Score_Label", "Voto_Macro", "Dist_SMA10", "Mom_6M", "Mom_12M", "PIL", "PMI", "RSI"]].rename(
+        columns={"Score_Label": "Mom_6_12M"}
+    )
     df_comp.index = range(1, len(df_comp) + 1)
     st.dataframe(df_comp, use_container_width=True)
 
@@ -603,7 +642,7 @@ elif modulo == "🔄 Correlazione ETF":
 
     st.markdown("---")
     st.subheader("🗺️ Matrice di Correlazione Dinamica (Heatmap Paniere)")
-    default_basket = [p for p in ["America", "Canada", "Giappone", "Taiwan", "Spagna", "Italia"] if p in paesi_disponibili][:6]
+    default_basket = [p for p in ["Canada", "UK", "America", "Giappone", "Taiwan", "Spagna"] if p in paesi_disponibili][:6]
     selected_basket = st.multiselect("Paniere Asset (max 10):", options=paesi_disponibili, default=default_basket, max_selections=10)
     if len(selected_basket) >= 2:
         returns_dict = {}
@@ -626,7 +665,7 @@ elif modulo == "🔄 Correlazione ETF":
             st.plotly_chart(fig_heat, use_container_width=True)
 
 # =============================================================================
-# PAGINA 3: PORTAFOGLIO / PAPER TRADING AVANZATO (ALLINEATO IN EUR & WEEKEND SAFE)
+# PAGINA 3: PORTAFOGLIO / PAPER TRADING AVANZATO (EUR, XEON & WEEKEND SAFE)
 # =============================================================================
 elif modulo == "💼 Portafoglio / Paper Trading":
     st.title("💼 Portafoglio Simulato & Paper Trading")
@@ -652,23 +691,30 @@ elif modulo == "💼 Portafoglio / Paper Trading":
     col_hdr.subheader("🧩 1. Selezione Asset & Allocazione Pesi (%)")
 
     paesi_list = df_all["Paese"].tolist()
-    opzioni_asset = [f"ETF: {p}" for p in paesi_list] + ["Crypto: BTC", "Crypto: ETH"]
+    opzioni_asset = [f"ETF: {p}" for p in paesi_list] + [XEON_LABEL, "Crypto: BTC", "Crypto: ETH"]
 
     if "ptf_asset_scelti" not in st.session_state:
-        st.session_state["ptf_asset_scelti"] = [f"ETF: {p}" for p in ["America", "Canada", "Giappone"] if p in paesi_list] + ["Crypto: BTC"]
+        st.session_state["ptf_asset_scelti"] = [f"ETF: {p}" for p in ["Canada", "Giappone", "Taiwan"] if p in paesi_list] + ["Crypto: BTC"]
 
-    if col_btn.button("⚡ Carica Portafoglio Modello (ETF Attivi)", use_container_width=True):
-        attivi = df_all[df_all["Allocazione"] > 0]["Paese"].tolist()
-        if len(attivi) >= 2:
-            scelti_mod = [f"ETF: {p}" for p in attivi]
+    # Pulsante rapido: carica gli ETF attivi del modello V1 + eventuale quota XEON difensiva
+    if col_btn.button("⚡ Carica Portafoglio Modello v5.0 (V1)", use_container_width=True):
+        attivi_df = df_all[df_all["Allocazione"] > 0]
+        budget_ref = max(1, int(etf_meta["budget_totale"]))
+        scelti_mod = [f"ETF: {p}" for p in attivi_df["Paese"].tolist()]
+        pesi_mod = {f"ETF: {r['Paese']}": int(round((r["Allocazione"] / budget_ref) * 100.0)) for _, r in attivi_df.iterrows()}
+
+        rem_xeon = 100 - sum(pesi_mod.values())
+        if rem_xeon > 0:
+            scelti_mod.append(XEON_LABEL)
+            pesi_mod[XEON_LABEL] = rem_xeon
+
+        if len(scelti_mod) >= 2:
             st.session_state["ptf_asset_scelti"] = scelti_mod
-            p_base = 100 // len(scelti_mod)
-            p_rem = 100 - p_base * len(scelti_mod)
-            for idx_m, lbl_m in enumerate(scelti_mod):
-                st.session_state[f"peso_{lbl_m}"] = p_base + (p_rem if idx_m == 0 else 0)
+            for k_m, v_m in pesi_mod.items():
+                st.session_state[f"peso_{k_m}"] = v_m
             st.rerun()
         else:
-            st.info("Meno di 2 ETF attivi nel modello questo mese.")
+            st.info("Meno di 2 asset attivi nel modello questo mese.")
 
     asset_scelti = st.multiselect("Scegli gli asset da inserire in portafoglio:", options=opzioni_asset, key="ptf_asset_scelti")
 
@@ -701,7 +747,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                         st.session_state[f"peso_{k}"] = val_n
                 st.rerun()
         else:
-            # Raccolta PREZZI in EUR prima di calcolare i rendimenti (cattura anche i weekend crypto)
             prices_map, dettagli_righe = {}, []
             quota_crypto, quota_trend_up = 0.0, 0.0
             asset_contro_trend = []
@@ -712,7 +757,17 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 if w == 0:
                     continue
 
-                if asset_label.startswith("ETF: "):
+                if asset_label == XEON_LABEL:
+                    ticker_curr = etf_meta["xeon_ticker"]
+                    trend_curr = "🛡️ DIFENSIVO"
+                    is_up_curr = True
+                    alloc_mod = f"{etf_meta['xeon_eur']} € (Parcheggio Cash)"
+                    hist_df = load_etf_history(ticker_curr)
+                    if hist_df is not None and not hist_df.empty:
+                        prices_map[asset_label] = hist_df.sort_values("Date").set_index("Date")["Close"]
+                        etf_assets_active.append(asset_label)
+
+                elif asset_label.startswith("ETF: "):
                     paese_nome = asset_label.replace("ETF: ", "")
                     r_row = df_all[df_all["Paese"] == paese_nome].iloc[0]
                     ticker_curr = r_row["Ticker_YF"]
@@ -762,7 +817,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
             if len(valid_assets) >= 2:
                 df_prices_union = pd.DataFrame({k: prices_map[k] for k in valid_assets}).sort_index().ffill()
                 if len(etf_assets_active) > 0:
-                    # Allinea sui giorni di borsa aperta degli ETF: il lunedì crypto include l'intero weekend
                     etf_common_dates = pd.DataFrame({k: prices_map[k] for k in etf_assets_active}).dropna().index
                     df_prices_aligned = df_prices_union.loc[df_prices_union.index.isin(etf_common_dates)].dropna()
                 else:
@@ -779,8 +833,8 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     w_vec = w_vec / w_vec.sum()
                     corr_mat_ptf = df_rets_ptf.corr()
                     vol_annua_ptf = float(np.sqrt(np.dot(w_vec.T, np.dot((df_rets_ptf.cov() * ann_factor).values, w_vec)))) * 100.0
-                    num_c = sum(w_vec[i] * w_vec[j] * corr_mat_ptf.iloc[i, j] for i in range(len(valid_assets)) for j in range(i + 1, len(valid_assets)))
-                    den_c = sum(w_vec[i] * w_vec[j] for i in range(len(valid_assets)) for j in range(i + 1, len(valid_assets)))
+                    num_c = sum(w_vec[i] * w_vec[j] * corr_mat_ptf.iloc[i, j] for i in range(len(valid_assets)) for j in range(i + 1, len(valid_assets)) if pd.notna(corr_mat_ptf.iloc[i, j]))
+                    den_c = sum(w_vec[i] * w_vec[j] for i in range(len(valid_assets)) for j in range(i + 1, len(valid_assets)) if pd.notna(corr_mat_ptf.iloc[i, j]))
                     corr_media_ptf = float(num_c / den_c) if den_c > 0 else 0.0
 
             profilo_rischio = "🔴 Aggressivo" if (vol_annua_ptf >= 28 or quota_crypto >= 35) else ("🟠 Dinamico" if (vol_annua_ptf >= 18 or quota_crypto >= 15) else ("🟡 Bilanciato" if vol_annua_ptf >= 11 else "🟢 Conservativo"))
@@ -789,9 +843,9 @@ elif modulo == "💼 Portafoglio / Paper Trading":
             st.subheader("📊 2. Metriche Sintetiche di Portafoglio")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Correlazione Complessiva", f"{corr_media_ptf:.2f}", "Ben diversificato" if corr_media_ptf < 0.45 else "Moderata/Alta", delta_color="off")
-            m2.metric("Quota in Trend UP", f"{quota_trend_up:.0f}%", "Allineato al trend" if quota_trend_up >= 70 else "Quota in DOWN presente", delta_color="off")
+            m2.metric("Quota Allineata / Difensiva", f"{quota_trend_up:.0f}%", "Allineato al trend" if quota_trend_up >= 70 else "Quota in DOWN presente", delta_color="off")
             m3.metric("Profilo di Rischio", profilo_rischio, f"Volatilità annua: {vol_annua_ptf:.1f}%", delta_color="off")
-            m4.metric("Esposizione Crypto", f"{quota_crypto:.0f}%", f"ETF: {100 - quota_crypto:.0f}%", delta_color="off")
+            m4.metric("Esposizione Crypto", f"{quota_crypto:.0f}%", f"ETF/Monetario: {100 - quota_crypto:.0f}%", delta_color="off")
 
             if asset_contro_trend:
                 st.warning(f"⚠️ **Asset contro-trend nel portafoglio:** {', '.join(asset_contro_trend)}. I modelli strutturali indicano cautela / Cash su questi strumenti.")
@@ -843,10 +897,10 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 st.plotly_chart(fig_eq, use_container_width=True)
 
 # =============================================================================
-# PAGINA 4: CRYPTO (BTC & ETH — REGIME v4 + TRIPLA CONFLUENZA)
+# PAGINA 4: CRYPTO (BTC & ETH — REGIME v4.1 + TRIPLA CONFLUENZA)
 # =============================================================================
 elif modulo == "₿ Crypto (BTC & ETH)":
-    st.title("₿ Quantamentale Crypto — Regime Strutturale v4 & Confluenza")
+    st.title("₿ Quantamentale Crypto — Regime Strutturale v4.1 & Confluenza")
     st.markdown("---")
 
     global_fng = get_global_fear_and_greed()
@@ -865,7 +919,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
                 st.metric(
                     f"Prezzo Attuale {code}",
                     f"${price_live:,.2f}",
-                    f"Trend v4: {arch['trend_label']} | Target: {arch['alloc_pct']:.0f}%",
+                    f"Trend v4.1: {arch['trend_label']} | Target: {arch['alloc_pct']:.0f}%",
                     delta_color="off"
                 )
                 if arch["is_up"]:
@@ -905,7 +959,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
             delta_color="normal" if ret_c_pct >= 0 else "inverse"
         )
         c_m2.metric(
-            "Regime & Allocazione v4",
+            "Regime & Allocazione v4.1",
             curr_arch["trend_label"] if curr_arch else "N/D",
             f"Target: {curr_arch['alloc_pct']:.0f}%" if curr_arch else "",
             delta_color=("normal" if curr_arch["is_up"] else "inverse") if curr_arch else "off"
