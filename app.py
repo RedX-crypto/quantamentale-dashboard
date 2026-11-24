@@ -22,6 +22,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+DARK_GRID = "rgba(255, 255, 255, 0.10)"
+
+def style_dark_chart(fig, title, y_title="", x_title="", height=460, showlegend=True, y_type="linear", y_range=None):
+    yaxis_cfg = dict(type=y_type, showgrid=True, gridcolor=DARK_GRID)
+    if y_range is not None:
+        yaxis_cfg["range"] = y_range
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=16)),
+        yaxis_title=y_title,
+        xaxis_title=x_title,
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=height,
+        margin=dict(l=30, r=30, t=50, b=30),
+        xaxis=dict(showgrid=True, gridcolor=DARK_GRID),
+        yaxis=yaxis_cfg,
+        showlegend=showlegend
+    )
+    return fig
+
 # ------------------------------------------------------------------------------
 # UTILITY PERCORSI & CARICAMENTO DATI
 # ------------------------------------------------------------------------------
@@ -69,9 +90,17 @@ def clean_country_name(name):
     }
     return aliases.get(n, n)
 
+def compute_rsi_wilder(close_series, period=14):
+    delta = close_series.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1.0 / period, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1.0 / period, adjust=False).mean()
+    rs = gain / (loss + 1e-12)
+    return 100.0 - (100.0 / (1.0 + rs))
+
+# Tutti i ticker fallback rigorosamente in EUR
 fallback_tickers = {
     "Arabia": "IKSA.DE", "India": "NDIA.MI", "Germania": "MD4X.DE", "Taiwan": "DBX5.DE",
-    "Spagna": "XESP.DE", "Francia": "IS3U.DE", "UK": "CUKX.L", "Italia": "ITAMID.MI",
+    "Spagna": "XESP.DE", "Francia": "IS3U.DE", "UK": "SXR3.DE", "Italia": "ITAMID.MI",
     "Canada": "CSCA.MI", "America": "CSSPX.MI", "Sud Africa": "SRSA.MI", "Messico": "D5BI.DE",
     "Giappone": "VJPA.MI", "Argentina": "ALAT.MI", "Brasile": "4BRZ.DE", "Cina": "ICGA.DE",
     "Corea": "KOR.MI", "Indonesia": "INDO.MI"
@@ -85,8 +114,8 @@ def load_etf_history(ticker):
             if not df_yf.empty:
                 df_yf = df_yf.reset_index()
                 date_col = [c for c in df_yf.columns if 'date' in c.lower() or 'data' in c.lower()][0]
-                df_yf[date_col] = strip_timezone(df_yf[date_col])
-                df_yf = df_yf.sort_values(by=date_col)
+                df_yf[date_col] = strip_timezone(df_yf[date_col]).dt.normalize()
+                df_yf = df_yf.sort_values(by=date_col).drop_duplicates(subset=[date_col], keep="last")
                 return df_yf[[date_col, 'Open', 'High', 'Low', 'Close']].rename(
                     columns={date_col: 'Date'}
                 ).dropna()
@@ -95,8 +124,8 @@ def load_etf_history(ticker):
     return None
 
 @st.cache_data(ttl=3600)
-def load_crypto_history(crypto_code, interval="1wk"):
-    symbol = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
+def load_crypto_history(crypto_code, interval="1wk", currency="USD"):
+    symbol = f"{crypto_code}-{currency}"
     if yf is not None:
         try:
             period_arg = "max" if interval == "1wk" else "5y"
@@ -104,8 +133,8 @@ def load_crypto_history(crypto_code, interval="1wk"):
             if not df_yf.empty:
                 df_yf = df_yf.reset_index()
                 date_col = [c for c in df_yf.columns if 'date' in c.lower() or 'data' in c.lower()][0]
-                df_yf[date_col] = strip_timezone(df_yf[date_col])
-                df_yf = df_yf.sort_values(by=date_col)
+                df_yf[date_col] = strip_timezone(df_yf[date_col]).dt.normalize()
+                df_yf = df_yf.sort_values(by=date_col).drop_duplicates(subset=[date_col], keep="last")
                 return df_yf[[date_col, 'Open', 'High', 'Low', 'Close']].rename(
                     columns={date_col: 'Date'}
                 ).dropna()
@@ -158,7 +187,7 @@ def load_all_data():
 
             for _, row in df_latest.iterrows():
                 p_key = clean_country_name(row['Country'])
-                voto_v = float(row['Voto']) if pd.notna(row['Voto']) else 2.50
+                voto_v = float(row['Voto']) if pd.notna(row['Voto']) else np.nan
                 pil_raw = row['PIL'] if 'PIL' in row and pd.notna(row['PIL']) else None
                 pil_v = f"{pil_raw * 100:+.2f}%" if isinstance(pil_raw, (int, float)) and abs(pil_raw) < 1 else (str(pil_raw) if pil_raw is not None else "N/D")
                 pmi_cols = [c for c in df_latest.columns if 'pmi' in str(c).lower()]
@@ -198,10 +227,7 @@ def load_all_data():
                 rsi_val, mom1m_val, mom3m_val = 50.0, 0.0, 0.0
                 if df_h is not None and len(df_h) >= 14:
                     close_s = df_h['Close']
-                    delta = close_s.diff()
-                    gain = delta.where(delta > 0, 0).rolling(14).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                    rsi_val = round(float((100 - (100 / (1 + gain / (loss + 1e-9)))).iloc[-1]), 1)
+                    rsi_val = round(float(compute_rsi_wilder(close_s, 14).iloc[-1]), 1)
                     if len(df_h) >= 21:
                         mom1m_val = round(((close_s.iloc[-1] - close_s.iloc[-21]) / close_s.iloc[-21]) * 100, 2)
                     if len(df_h) >= 63:
@@ -215,9 +241,9 @@ def load_all_data():
                     "Stato_Azione": stato_azione,
                     "Allocazione": alloc_eur,
                     "Score_Quant": round(score_q, 3),
+                    "Voto_Macro": round(voto_macro_val, 2) if pd.notna(voto_macro_val) else "N/D",
                     "Dist_SMA10": f"{dist_sma10:+.1f}%",
                     "Mom_12M": f"{mom12_val:+.1f}%",
-                    "Voto_Macro": round(voto_macro_val, 2) if pd.notna(voto_macro_val) else "N/D",
                     "PIL": macro_info["PIL"],
                     "PMI": macro_info["PMI"],
                     "RSI": rsi_val,
@@ -231,6 +257,7 @@ def load_all_data():
     if not records:
         return pd.DataFrame(), etf_last_month
 
+    # Ordinamento puramente Quant (Voto_Macro affiancato solo per lettura)
     df = pd.DataFrame(records).sort_values(by=["Trend_OK", "Score_Quant"], ascending=[False, False]).reset_index(drop=True)
     df.index = df.index + 1
     return df, etf_last_month
@@ -310,11 +337,7 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
 
         sma_20 = float(close.rolling(window=20).mean().iloc[-1])
         sma_30 = float(close.rolling(window=30).mean().iloc[-1])
-
-        delta = close.diff()
-        gain = delta.where(delta > 0, 0).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rsi_14 = float((100 - (100 / (1 + gain / (loss + 1e-9)))).iloc[-1])
+        rsi_14 = float(compute_rsi_wilder(close, 14).iloc[-1])
 
         exp1 = close.ewm(span=12, adjust=False).mean()
         exp2 = close.ewm(span=26, adjust=False).mean()
@@ -331,7 +354,7 @@ def get_crypto_confluence_auto(crypto_code, fng_val):
         p3_score = min(3, dxy_weak + 2)
 
         df_ind = pd.DataFrame({
-            "Indicatore": ["Chiusura Sett. Prec.", "Var. vs Chiusura Prec.", "RSI (14)", "MACD Hist", "SMA 20w", "SMA 30w"],
+            "Indicatore": ["Chiusura Sett. Prec.", "Var. vs Chiusura Prec.", "RSI (14 Wilder)", "MACD Hist", "SMA 20w (Live)", "SMA 30w (Live)"],
             "Valore Ufficiale": [
                 f"${prev_week_close:,.2f}", f"{diff_vs_prev_pct:+.2f}%",
                 f"{rsi_14:.2f}", f"{macd_hist:+.2f}", f"${sma_20:,.2f}", f"${sma_30:,.2f}"
@@ -390,7 +413,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     df_tab_view = df_all[df_all["Trend_OK"] == True] if solo_up else df_all
 
     st.dataframe(
-        df_tab_view[["Paese", "Trend", "Stato_Azione", "Allocazione", "Score_Quant", "Dist_SMA10", "Mom_12M", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M"]],
+        df_tab_view[["Paese", "Trend", "Stato_Azione", "Allocazione", "Score_Quant", "Voto_Macro", "Dist_SMA10", "Mom_12M", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M"]],
         use_container_width=True
     )
 
@@ -405,7 +428,7 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
     down_df = df_all[df_all["Trend_OK"] == False].sort_values(by="Score_Quant", ascending=True)
     worst_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
     c2.metric("🔴 Peggiore Trend DOWN", worst_down["Paese"], f"Score: {worst_down['Score_Quant']:.3f}", delta_color="inverse")
-    
+
     best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
     c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"], delta_color="normal")
 
@@ -444,13 +467,13 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         m_col1.metric(
             f"Performance ({horizon_etf})",
             f"{ret_pct:+.2f}%",
-            f"Finale: {p_end:,.2f}",
+            f"Finale: €{p_end:,.2f}",
             delta_color="normal" if ret_pct >= 0 else "inverse"
         )
         m_col2.metric(
             "Trend Strutturale",
             row_country["Trend"],
-            f"Score: {row_country['Score_Quant']:.3f} | SMA10: {row_country['Dist_SMA10']}",
+            f"Score: {row_country['Score_Quant']:.3f} | Macro: {row_country['Voto_Macro']}",
             delta_color="normal" if row_country["Trend_OK"] else "inverse"
         )
         m_col3.metric(
@@ -461,8 +484,8 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         )
 
         sl_col1, sl_col2 = st.columns(2)
-        sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"{stop_loss_price:,.2f}", f"-{sl_dist_pct:.2f}%", delta_color="normal")
-        sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"{take_profit_price:,.2f}", f"+{tp_dist_pct:.2f}%", delta_color="normal")
+        sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"€{stop_loss_price:,.2f}", f"-{sl_dist_pct:.2f}%", delta_color="normal")
+        sl_col2.metric("🎯 Take Profit del Mese (Consigliato)", f"€{take_profit_price:,.2f}", f"+{tp_dist_pct:.2f}%", delta_color="normal")
 
         fig = go.Figure()
         if chart_type == "Candele (Candlestick)" and 'Open' in df_filt.columns:
@@ -473,19 +496,18 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         else:
             fig.add_trace(go.Scatter(
                 x=df_filt['Date'], y=df_filt['Close'], mode='lines', name=selected_country,
-                line=dict(color='#2962FF', width=2.5)
+                line=dict(color='#448AFF', width=2.5)
             ))
 
         fig.add_hline(y=stop_loss_price, line_dash="dash", line_color="#ef5350", line_width=2,
-                      annotation_text=f"Stop Loss: {stop_loss_price:,.2f}", annotation_position="bottom right")
+                      annotation_text=f"Stop Loss: €{stop_loss_price:,.2f}", annotation_position="bottom right")
         fig.add_hline(y=take_profit_price, line_dash="dash", line_color="#26a69a", line_width=2,
-                      annotation_text=f"Take Profit: {take_profit_price:,.2f}", annotation_position="top right")
+                      annotation_text=f"Take Profit: €{take_profit_price:,.2f}", annotation_position="top right")
 
-        fig.update_layout(
-            title=dict(text=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']}) con Livelli Operativi</b>", font=dict(size=16)),
-            yaxis_title="Prezzo", xaxis_title="Data", template="plotly_white", height=520,
-            margin=dict(l=30, r=30, t=50, b=30), xaxis=dict(showgrid=True, gridcolor='#F0F2F5', type='date'),
-            yaxis=dict(type="linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
+        style_dark_chart(
+            fig,
+            title=f"<b>Grafico Prezzi {selected_country} ({row_country['Ticker_YF']}) con Livelli Operativi</b>",
+            y_title="Prezzo (€)", x_title="Data", height=520, showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -552,15 +574,16 @@ elif modulo == "🔄 Correlazione ETF":
 
     if rolling_series is not None and not rolling_series.empty:
         fig_roll = go.Figure()
-        fig_roll.add_trace(go.Scatter(x=rolling_series['Date'], y=rolling_series['Rolling_Corr'], mode='lines', line=dict(color='#7B1FA2', width=2)))
+        fig_roll.add_trace(go.Scatter(x=rolling_series['Date'], y=rolling_series['Rolling_Corr'], mode='lines', line=dict(color='#CE93D8', width=2)))
         fig_roll.add_hline(y=soglia_over, line_dash="dash", line_color="#ef5350", annotation_text=f"Soglia {soglia_over:.2f}")
         fig_roll.add_hline(y=0, line_dash="dot", line_color="#888888")
-        fig_roll.update_layout(title=f"<b>Rolling Correlation nel Tempo: {country1} vs {country2}</b>", yaxis=dict(range=[-1.05, 1.05]), template="plotly_white", height=340)
+        style_dark_chart(fig_roll, f"<b>Rolling Correlation nel Tempo: {country1} vs {country2}</b>",
+                         y_title="Correlazione", height=340, showlegend=False, y_range=[-1.05, 1.05])
         st.plotly_chart(fig_roll, use_container_width=True)
 
     st.markdown("---")
     st.subheader("📋 Confronto Diretto Metriche")
-    df_comp = pd.DataFrame([row1, row2])[["Paese", "Trend", "Stato_Azione", "Score_Quant", "Dist_SMA10", "Voto_Macro", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M"]]
+    df_comp = pd.DataFrame([row1, row2])[["Paese", "Trend", "Stato_Azione", "Score_Quant", "Voto_Macro", "Dist_SMA10", "PIL", "PMI", "RSI", "Mom_1M", "Mom_3M"]]
     df_comp.index = range(1, len(df_comp) + 1)
     st.dataframe(df_comp, use_container_width=True)
 
@@ -572,9 +595,10 @@ elif modulo == "🔄 Correlazione ETF":
         df_plot_base['Norm1'] = (df_plot_base[p1_col] / df_plot_base[p1_col].iloc[0]) * 100
         df_plot_base['Norm2'] = (df_plot_base[p2_col] / df_plot_base[p2_col].iloc[0]) * 100
         fig_corr = go.Figure()
-        fig_corr.add_trace(go.Scatter(x=df_plot_base['Date'], y=df_plot_base['Norm1'], mode='lines', name=f"{country1} ({row1['Ticker_YF']})", line=dict(color='#2962FF', width=2)))
-        fig_corr.add_trace(go.Scatter(x=df_plot_base['Date'], y=df_plot_base['Norm2'], mode='lines', name=f"{country2} ({row2['Ticker_YF']})", line=dict(color='#FF6D00', width=2)))
-        fig_corr.update_layout(title=f"<b>Andamento Comparativo (Base 100): {country1} vs {country2}</b>", yaxis_title="Base 100", template="plotly_white", height=460)
+        fig_corr.add_trace(go.Scatter(x=df_plot_base['Date'], y=df_plot_base['Norm1'], mode='lines', name=f"{country1} ({row1['Ticker_YF']})", line=dict(color='#448AFF', width=2.2)))
+        fig_corr.add_trace(go.Scatter(x=df_plot_base['Date'], y=df_plot_base['Norm2'], mode='lines', name=f"{country2} ({row2['Ticker_YF']})", line=dict(color='#FFA726', width=2.2)))
+        style_dark_chart(fig_corr, f"<b>Andamento Comparativo (Base 100): {country1} vs {country2}</b>",
+                         y_title="Base 100", x_title="Data", height=460, showlegend=True)
         st.plotly_chart(fig_corr, use_container_width=True)
 
     st.markdown("---")
@@ -592,14 +616,17 @@ elif modulo == "🔄 Correlazione ETF":
             corr_matrix = pd.DataFrame(returns_dict).dropna(how='all').corr()
             fig_heat = go.Figure(data=go.Heatmap(
                 z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.index, zmin=-1, zmax=1,
-                colorscale=[[0.0, "#d32f2f"], [0.5, "#f5f5f5"], [1.0, "#2e7d32"]],
+                colorscale=[[0.0, "#c62828"], [0.5, "#263238"], [1.0, "#2e7d32"]],
                 text=np.round(corr_matrix.values, 2), texttemplate="%{text}"
             ))
-            fig_heat.update_layout(title=f"<b>Heatmap Correlazioni ({scelta_finestra})</b>", template="plotly_white", height=520)
+            fig_heat.update_layout(
+                title=f"<b>Heatmap Correlazioni ({scelta_finestra})</b>",
+                template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=520
+            )
             st.plotly_chart(fig_heat, use_container_width=True)
 
 # =============================================================================
-# PAGINA 3: PORTAFOGLIO / PAPER TRADING AVANZATO
+# PAGINA 3: PORTAFOGLIO / PAPER TRADING AVANZATO (ALLINEATO IN EUR & WEEKEND SAFE)
 # =============================================================================
 elif modulo == "💼 Portafoglio / Paper Trading":
     st.title("💼 Portafoglio Simulato & Paper Trading")
@@ -630,7 +657,6 @@ elif modulo == "💼 Portafoglio / Paper Trading":
     if "ptf_asset_scelti" not in st.session_state:
         st.session_state["ptf_asset_scelti"] = [f"ETF: {p}" for p in ["America", "Canada", "Giappone"] if p in paesi_list] + ["Crypto: BTC"]
 
-    # Pulsante rapido: carica gli ETF attivi del modello mensile (Allocazione > 0) a pesi uguali
     if col_btn.button("⚡ Carica Portafoglio Modello (ETF Attivi)", use_container_width=True):
         attivi = df_all[df_all["Allocazione"] > 0]["Paese"].tolist()
         if len(attivi) >= 2:
@@ -675,9 +701,11 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                         st.session_state[f"peso_{k}"] = val_n
                 st.rerun()
         else:
-            returns_map, dettagli_righe = {}, []
+            # Raccolta PREZZI in EUR prima di calcolare i rendimenti (cattura anche i weekend crypto)
+            prices_map, dettagli_righe = {}, []
             quota_crypto, quota_trend_up = 0.0, 0.0
             asset_contro_trend = []
+            etf_assets_active = []
 
             for asset_label, w_pct in pesi_dict.items():
                 w = w_pct / 100.0
@@ -694,11 +722,12 @@ elif modulo == "💼 Portafoglio / Paper Trading":
 
                     hist_df = load_etf_history(ticker_curr)
                     if hist_df is not None and not hist_df.empty:
-                        returns_map[asset_label] = hist_df.sort_values("Date").set_index("Date")["Close"].pct_change().dropna()
+                        prices_map[asset_label] = hist_df.sort_values("Date").set_index("Date")["Close"]
+                        etf_assets_active.append(asset_label)
                 else:
                     crypto_code = asset_label.replace("Crypto: ", "")
                     quota_crypto += w_pct
-                    ticker_curr = "BTC-USD" if crypto_code == "BTC" else "ETH-USD"
+                    ticker_curr = f"{crypto_code}-EUR"
                     c_arch = btc_arch_global if crypto_code == "BTC" else eth_arch_global
                     if c_arch:
                         trend_curr = c_arch["trend_label"]
@@ -707,9 +736,12 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                     else:
                         trend_curr, is_up_curr, alloc_mod = "⚠️ N/D", False, "Archivio mancante"
 
-                    df_c_d = load_crypto_history(crypto_code, interval="1d")
+                    df_c_d = load_crypto_history(crypto_code, interval="1d", currency="EUR")
+                    if df_c_d is None or df_c_d.empty:
+                        df_c_d = load_crypto_history(crypto_code, interval="1d", currency="USD")
+                        ticker_curr = f"{crypto_code}-USD"
                     if df_c_d is not None and not df_c_d.empty:
-                        returns_map[asset_label] = df_c_d.sort_values("Date").set_index("Date")["Close"].pct_change().dropna()
+                        prices_map[asset_label] = df_c_d.sort_values("Date").set_index("Date")["Close"]
 
                 if is_up_curr:
                     quota_trend_up += w_pct
@@ -724,20 +756,29 @@ elif modulo == "💼 Portafoglio / Paper Trading":
 
             corr_media_ptf, vol_annua_ptf = 0.0, 0.0
             df_rets_ptf = pd.DataFrame()
-            valid_assets = [k for k in returns_map.keys() if pesi_dict[k] > 0]
+            valid_assets = [k for k in prices_map.keys() if pesi_dict[k] > 0]
+            ann_factor = 252.0 if len(etf_assets_active) > 0 else 365.0
 
             if len(valid_assets) >= 2:
-                df_rets_full = pd.DataFrame({k: returns_map[k] for k in valid_assets}).dropna()
-                if not df_rets_full.empty:
-                    end_dt = df_rets_full.index.max()
+                df_prices_union = pd.DataFrame({k: prices_map[k] for k in valid_assets}).sort_index().ffill()
+                if len(etf_assets_active) > 0:
+                    # Allinea sui giorni di borsa aperta degli ETF: il lunedì crypto include l'intero weekend
+                    etf_common_dates = pd.DataFrame({k: prices_map[k] for k in etf_assets_active}).dropna().index
+                    df_prices_aligned = df_prices_union.loc[df_prices_union.index.isin(etf_common_dates)].dropna()
+                else:
+                    df_prices_aligned = df_prices_union.dropna()
+
+                if len(df_prices_aligned) > 15:
+                    end_dt = df_prices_aligned.index.max()
                     start_dt = end_dt - offset_ptf
+                    df_rets_full = df_prices_aligned.pct_change().dropna()
                     df_rets_ptf = df_rets_full[df_rets_full.index >= start_dt]
 
                 if len(df_rets_ptf) > 15:
                     w_vec = np.array([pesi_dict[k] / 100.0 for k in valid_assets])
                     w_vec = w_vec / w_vec.sum()
                     corr_mat_ptf = df_rets_ptf.corr()
-                    vol_annua_ptf = float(np.sqrt(np.dot(w_vec.T, np.dot((df_rets_ptf.cov() * 252.0).values, w_vec)))) * 100.0
+                    vol_annua_ptf = float(np.sqrt(np.dot(w_vec.T, np.dot((df_rets_ptf.cov() * ann_factor).values, w_vec)))) * 100.0
                     num_c = sum(w_vec[i] * w_vec[j] * corr_mat_ptf.iloc[i, j] for i in range(len(valid_assets)) for j in range(i + 1, len(valid_assets)))
                     den_c = sum(w_vec[i] * w_vec[j] for i in range(len(valid_assets)) for j in range(i + 1, len(valid_assets)))
                     corr_media_ptf = float(num_c / den_c) if den_c > 0 else 0.0
@@ -763,20 +804,26 @@ elif modulo == "💼 Portafoglio / Paper Trading":
             col_tab.dataframe(df_dettagli, use_container_width=True)
 
             fig_pie = go.Figure(data=[go.Pie(labels=df_dettagli["Asset"], values=[pesi_dict[a] for a in df_dettagli["Asset"]], hole=0.45, textinfo="label+percent")])
-            fig_pie.update_layout(title="<b>Ripartizione Portafoglio</b>", template="plotly_white", height=340, showlegend=False)
+            fig_pie.update_layout(
+                title="<b>Ripartizione Portafoglio</b>",
+                template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                height=340, margin=dict(l=10, r=10, t=40, b=10), showlegend=False
+            )
             col_pie.plotly_chart(fig_pie, use_container_width=True)
 
-            if len(valid_assets) >= 2 and not df_rets_ptf.empty:
+            if len(valid_assets) >= 2 and len(df_rets_ptf) > 15:
                 ptf_daily_ret = df_rets_ptf.dot(w_vec)
-                ptf_equity = ((1.0 + ptf_daily_ret).cumprod() / float((1.0 + ptf_daily_ret).cumprod().iloc[0])) * 100.0
+                ptf_eq_raw = (1.0 + ptf_daily_ret).cumprod()
+                ptf_equity = (ptf_eq_raw / float(ptf_eq_raw.iloc[0])) * 100.0
                 val_finale = float(ptf_equity.iloc[-1])
                 perf_pct = val_finale - 100.0
                 capitale_finale = capitale_totale * (val_finale / 100.0)
                 max_dd_pct = float(((ptf_equity / ptf_equity.cummax()) - 1.0).min()) * 100.0
-                sharpe_ratio = ((float(ptf_daily_ret.mean()) * 252.0) / (float(ptf_daily_ret.std()) * np.sqrt(252.0))) if float(ptf_daily_ret.std()) > 0 else 0.0
+                ret_std = float(ptf_daily_ret.std())
+                sharpe_ratio = ((float(ptf_daily_ret.mean()) * ann_factor) / (ret_std * np.sqrt(ann_factor))) if ret_std > 0 else 0.0
 
                 st.markdown("---")
-                st.subheader(f"📈 4. Performance Storica Simulata ({orizzonte_ptf}: {ptf_equity.index[0].strftime('%Y-%m-%d')} → {ptf_equity.index[-1].strftime('%Y-%m-%d')})")
+                st.subheader(f"📈 4. Performance Storica Simulata in EUR ({orizzonte_ptf}: {ptf_equity.index[0].strftime('%Y-%m-%d')} → {ptf_equity.index[-1].strftime('%Y-%m-%d')})")
                 p1, p2, p3, p4 = st.columns(4)
                 p1.metric(f"Profitto / Perdita ({orizzonte_ptf})", f"{perf_pct:+.2f}%", f"{capitale_finale - capitale_totale:+,.2f} €", delta_color="normal")
                 p2.metric("Controvalore Finale", f"{capitale_finale:,.2f} €", f"Iniziale: {capitale_totale:,.0f} €", delta_color="off")
@@ -784,14 +831,15 @@ elif modulo == "💼 Portafoglio / Paper Trading":
                 p4.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}", "Rendimento / Rischio", delta_color="off")
 
                 fig_eq = go.Figure()
-                fig_eq.add_trace(go.Scatter(x=ptf_equity.index, y=ptf_equity.values, mode="lines", name="Portafoglio Simulato", line=dict(color="#2e7d32" if perf_pct >= 0 else "#d32f2f", width=2.5)))
+                fig_eq.add_trace(go.Scatter(x=ptf_equity.index, y=ptf_equity.values, mode="lines", name="Portafoglio Simulato (EUR)", line=dict(color="#26a69a" if perf_pct >= 0 else "#ef5350", width=2.5)))
                 spy_hist = load_etf_history("CSSPX.MI")
                 if spy_hist is not None and not spy_hist.empty:
                     spy_al = spy_hist.sort_values("Date").set_index("Date")["Close"].reindex(ptf_equity.index).ffill().bfill()
                     if len(spy_al) > 1 and float(spy_al.iloc[0]) > 0:
-                        fig_eq.add_trace(go.Scatter(x=spy_al.index, y=(spy_al / float(spy_al.iloc[0])) * 100.0, mode="lines", name="Benchmark S&P 500 EUR", line=dict(color="#757575", width=2, dash="dash")))
+                        fig_eq.add_trace(go.Scatter(x=spy_al.index, y=(spy_al / float(spy_al.iloc[0])) * 100.0, mode="lines", name="Benchmark S&P 500 EUR", line=dict(color="#B0BEC5", width=2, dash="dash")))
                 fig_eq.add_hline(y=100.0, line_dash="dot", line_color="#888888")
-                fig_eq.update_layout(title=f"<b>Andamento Storico Simulato (Base 100 — {orizzonte_ptf})</b>", template="plotly_white", height=400)
+                style_dark_chart(fig_eq, f"<b>Andamento Storico Simulato vs Benchmark S&P 500 EUR (Base 100 — {orizzonte_ptf})</b>",
+                                 y_title="Base 100", x_title="Data", height=400, showlegend=True)
                 st.plotly_chart(fig_eq, use_container_width=True)
 
 # =============================================================================
@@ -824,7 +872,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
                     st.success(f"🟢 **REGIME: {arch['regime']} — ALLOCAZIONE TARGET: {arch['alloc_pct']:.0f}%**\n\nAzione settimanale: **{arch['azione']}** *(agg. {arch['data']})*")
                 else:
                     st.warning(f"🔴 **REGIME: {arch['regime']} — ALLOCAZIONE TARGET: 0% (100% CASH)**\n\nAzione settimanale: **{arch['azione']}** *(agg. {arch['data']})*")
-                st.caption(f"Livelli chiave modello: SMA 20w = **${arch['sma20']:,.2f}** | SMA 30w = **${arch['sma30']:,.2f}** | Vol 12w = **{arch['vol_12w']:.1f}%**")
+                st.caption(f"Livelli chiusura domenica (R): SMA 20w = **${arch['sma20']:,.2f}** | SMA 30w = **${arch['sma30']:,.2f}** | Vol 12w = **{arch['vol_12w']:.1f}%**")
             else:
                 st.warning(f"⚠️ File `Archivio_{code}_Definitivo.xlsx` non trovato. Caricalo su GitHub.")
 
@@ -844,7 +892,7 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     horizon_crypto = st.radio("Orizzonte Temporale Crypto:", ["1 Mese", "3 Mesi", "6 Mesi", "1 Anno", "3 Anni", "5 Anni", "Tutto (Max)"], index=6, horizontal=True)
 
     code_crypto = "BTC" if "BTC" in selected_crypto else "ETH"
-    df_crypto_chart = load_crypto_history(code_crypto, interval="1wk")
+    df_crypto_chart = load_crypto_history(code_crypto, interval="1wk", currency="USD")
     curr_arch = btc_arch_global if code_crypto == "BTC" else eth_arch_global
 
     if df_crypto_chart is not None and not df_crypto_chart.empty:
@@ -870,16 +918,17 @@ elif modulo == "₿ Crypto (BTC & ETH)":
                                            name=selected_crypto, increasing_line_color='#26a69a', decreasing_line_color='#ef5350'))
         else:
             fig_c.add_trace(go.Scatter(x=df_c_filt['Date'], y=df_c_filt['Close'], mode='lines', name=selected_crypto,
-                                       line=dict(color='#F7931A' if code_crypto == "BTC" else '#627EEA', width=2.5)))
+                                       line=dict(color='#F7931A' if code_crypto == "BTC" else '#7986CB', width=2.5)))
 
         if curr_arch and pd.notna(curr_arch["sma20"]):
-            fig_c.add_hline(y=curr_arch["sma20"], line_dash="dash", line_color="#2962FF", annotation_text=f"SMA 20w: ${curr_arch['sma20']:,.0f}")
+            fig_c.add_hline(y=curr_arch["sma20"], line_dash="dash", line_color="#448AFF", annotation_text=f"SMA 20w: ${curr_arch['sma20']:,.0f}")
         if curr_arch and pd.notna(curr_arch["sma30"]):
-            fig_c.add_hline(y=curr_arch["sma30"], line_dash="dot", line_color="#7B1FA2", annotation_text=f"SMA 30w: ${curr_arch['sma30']:,.0f}")
+            fig_c.add_hline(y=curr_arch["sma30"], line_dash="dot", line_color="#CE93D8", annotation_text=f"SMA 30w: ${curr_arch['sma30']:,.0f}")
 
-        fig_c.update_layout(
+        style_dark_chart(
+            fig_c,
             title=f"<b>Grafico Settimanale {selected_crypto} con Livelli SMA 20w / 30w</b>",
-            yaxis_title="Prezzo ($)", template="plotly_white", height=500,
-            yaxis=dict(type="log" if is_log_crypto else "linear", showgrid=True, gridcolor='#F0F2F5'), showlegend=False
+            y_title="Prezzo ($)", x_title="Data", height=500, showlegend=False,
+            y_type="log" if is_log_crypto else "linear"
         )
         st.plotly_chart(fig_c, use_container_width=True)
