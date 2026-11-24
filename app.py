@@ -99,8 +99,8 @@ def compute_rsi_wilder(close_series, period=14):
 
 # Tutti i ticker fallback rigorosamente in EUR
 fallback_tickers = {
-    "Arabia": "IKSA.DE", "India": "NDIA.MI", "Germania": "MD4X.DE", "Taiwan": "DBX5.DE",
-    "Spagna": "XESP.DE", "Francia": "IS3U.DE", "UK": "SXR3.DE", "Italia": "ITAMID.MI",
+    "Arabia": "IUSS.DE", "India": "NDIA.MI", "Germania": "MD4X.DE", "Taiwan": "DBX5.DE",
+    "Spagna": "XESP.DE", "Francia": "IS3U.DE", "UK": "SXRW.DE", "Italia": "ITAMID.MI",
     "Canada": "CSCA.MI", "America": "CSSPX.MI", "Sud Africa": "SRSA.MI", "Messico": "D5BI.DE",
     "Giappone": "VJPA.MI", "Argentina": "ALAT.MI", "Brasile": "4BRZ.DE", "Cina": "ICGA.DE",
     "Corea": "KOR.MI", "Indonesia": "INDO.MI"
