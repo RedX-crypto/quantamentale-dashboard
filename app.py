@@ -400,12 +400,12 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
 
     up_df = df_all[df_all["Trend_OK"] == True]
     best_up = up_df.iloc[0] if not up_df.empty else df_all.iloc[0]
-    c1.metric("🟢 Migliore Trend UP", best_up["Paese"], f"Score: {best_up['Score_Quant']:.3f}", delta_color="off")
+    c1.metric("🟢 Migliore Trend UP", best_up["Paese"], f"Score: {best_up['Score_Quant']:.3f}", delta_color="normal")
 
     down_df = df_all[df_all["Trend_OK"] == False].sort_values(by="Score_Quant", ascending=True)
     worst_down = down_df.iloc[0] if not down_df.empty else df_all.iloc[-1]
-    c2.metric("🔴 Peggiore Trend DOWN", worst_down["Paese"], f"Score: {worst_down['Score_Quant']:.3f}", delta_color="off")
-
+    c2.metric("🔴 Peggiore Trend DOWN", worst_down["Paese"], f"Score: {worst_down['Score_Quant']:.3f}", delta_color="inverse")
+    
     best_mom = df_all.sort_values(by="Mom_1M_num", ascending=False).iloc[0]
     c3.metric("🚀 Migliore del Mese (Prezzo)", best_mom["Paese"], best_mom["Mom_1M"], delta_color="normal")
 
@@ -441,9 +441,24 @@ if modulo == "🏆 Rotazione ETF & Grafici Dettagliati":
         tp_dist_pct = ((take_profit_price - p_end) / p_end) * 100.0 if p_end > 0 else 0.0
 
         m_col1, m_col2, m_col3 = st.columns(3)
-        m_col1.metric(f"Performance ({horizon_etf})", f"{ret_pct:+.2f}%", f"Finale: {p_end:,.2f}", delta_color="off")
-        m_col2.metric("Trend Strutturale", row_country["Trend"], f"Score: {row_country['Score_Quant']:.3f} | SMA10: {row_country['Dist_SMA10']}", delta_color="off")
-        m_col3.metric("Stato Azione / Allocazione", f"{row_country['Allocazione']} €", row_country["Stato_Azione"], delta_color="off")
+        m_col1.metric(
+            f"Performance ({horizon_etf})",
+            f"{ret_pct:+.2f}%",
+            f"Finale: {p_end:,.2f}",
+            delta_color="normal" if ret_pct >= 0 else "inverse"
+        )
+        m_col2.metric(
+            "Trend Strutturale",
+            row_country["Trend"],
+            f"Score: {row_country['Score_Quant']:.3f} | SMA10: {row_country['Dist_SMA10']}",
+            delta_color="normal" if row_country["Trend_OK"] else "inverse"
+        )
+        m_col3.metric(
+            "Stato Azione / Allocazione",
+            f"{row_country['Allocazione']} €",
+            row_country["Stato_Azione"],
+            delta_color="normal" if row_country["Allocazione"] > 0 else ("inverse" if "USCITA" in row_country["Stato_Azione"] else "off")
+        )
 
         sl_col1, sl_col2 = st.columns(2)
         sl_col1.metric("🛑 Stop Loss del Mese (Consigliato)", f"{stop_loss_price:,.2f}", f"-{sl_dist_pct:.2f}%", delta_color="normal")
@@ -835,8 +850,18 @@ elif modulo == "₿ Crypto (BTC & ETH)":
     if df_crypto_chart is not None and not df_crypto_chart.empty:
         df_c_filt, p_c_start, p_c_end, ret_c_pct = filter_by_horizon(df_crypto_chart, horizon_crypto)
         c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric(f"Performance ({horizon_crypto})", f"{ret_c_pct:+.2f}%", f"Chiusura: ${p_c_end:,.2f}", delta_color="off")
-        c_m2.metric("Regime & Allocazione v4", curr_arch["trend_label"] if curr_arch else "N/D", f"Target: {curr_arch['alloc_pct']:.0f}%" if curr_arch else "", delta_color="off")
+        c_m1.metric(
+            f"Performance ({horizon_crypto})",
+            f"{ret_c_pct:+.2f}%",
+            f"Chiusura: ${p_c_end:,.2f}",
+            delta_color="normal" if ret_c_pct >= 0 else "inverse"
+        )
+        c_m2.metric(
+            "Regime & Allocazione v4",
+            curr_arch["trend_label"] if curr_arch else "N/D",
+            f"Target: {curr_arch['alloc_pct']:.0f}%" if curr_arch else "",
+            delta_color=("normal" if curr_arch["is_up"] else "inverse") if curr_arch else "off"
+        )
         c_m3.metric("Crypto Fear & Greed Index", f"{global_fng} / 100")
 
         fig_c = go.Figure()
